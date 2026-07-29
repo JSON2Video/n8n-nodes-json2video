@@ -8,16 +8,18 @@ import type {
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
 import { executeMovieOperation } from './actions/movie';
-import { movieFields, movieOperations } from './descriptions';
+import { executeTemplateOperation } from './actions/template';
+import { movieFields, movieOperations, templateFields, templateOperations } from './descriptions';
 import { getAttachedProjectId, toNodeError } from './helpers/errors';
-import { searchTemplates } from './methods/listSearch';
+import { getTemplateTags } from './methods/loadOptions';
+import { searchLibraryTemplates, searchTemplates } from './methods/listSearch';
 
 // This node uses the programmatic style (an `execute` method) because the
 // "Render and Wait" operation creates a movie and then polls the API until the
 // render reaches a terminal status, with backoff and retry rules that the
 // declarative request/response mapping cannot express.
 //
-// Layout, so Template (Phase 5) and Media (Phase 6) slot in without churn:
+// Layout, so Media (Phase 6) slots in without churn:
 //   descriptions/  UI parameter definitions, one file per resource
 //   actions/       one folder per resource, one file per operation
 //   transport/     the shared authenticated request helper
@@ -55,17 +57,27 @@ export class Json2Video implements INodeType {
 						name: 'Movie',
 						value: 'movie',
 					},
+					{
+						name: 'Template',
+						value: 'template',
+					},
 				],
 				default: 'movie',
 			},
 			...movieOperations,
 			...movieFields,
+			...templateOperations,
+			...templateFields,
 		],
 	};
 
 	methods = {
 		listSearch: {
+			searchLibraryTemplates,
 			searchTemplates,
+		},
+		loadOptions: {
+			getTemplateTags,
 		},
 	};
 
@@ -78,7 +90,12 @@ export class Json2Video implements INodeType {
 				const resource = this.getNodeParameter('resource', itemIndex) as string;
 				const operation = this.getNodeParameter('operation', itemIndex) as string;
 
-				if (resource !== 'movie') {
+				let results: INodeExecutionData[];
+				if (resource === 'movie') {
+					results = await executeMovieOperation.call(this, operation, itemIndex);
+				} else if (resource === 'template') {
+					results = await executeTemplateOperation.call(this, operation, itemIndex);
+				} else {
 					throw new NodeOperationError(
 						this.getNode(),
 						`The resource "${resource}" is not supported`,
@@ -86,7 +103,6 @@ export class Json2Video implements INodeType {
 					);
 				}
 
-				const results = await executeMovieOperation.call(this, operation, itemIndex);
 				returnData.push(...results);
 			} catch (error) {
 				if (this.continueOnFail()) {

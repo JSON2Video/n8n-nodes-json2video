@@ -54,3 +54,47 @@ export async function searchTemplates(
 
 	return { results };
 }
+
+/**
+ * Lists the curated public template gallery for the "Source Template ID"
+ * resource locator on Template: Duplicate (Appendix C, "Library Template").
+ *
+ * Degrades gracefully the same way `searchTemplates` does: an empty list
+ * never breaks the parameter panel, and "By ID" always remains available.
+ */
+export async function searchLibraryTemplates(
+	this: ILoadOptionsFunctions,
+	filter?: string,
+): Promise<INodeListSearchResult> {
+	let templates: IDataObject[] = [];
+
+	try {
+		const response = await json2VideoApiRequest.call(this, 'GET', '/templates/library');
+		templates = Array.isArray(response.templates) ? (response.templates as IDataObject[]) : [];
+	} catch {
+		return { results: [] };
+	}
+
+	const needle = filter?.trim().toLowerCase() ?? '';
+
+	const results: INodeListSearchItems[] = [];
+	for (const template of templates) {
+		const id = typeof template.id === 'string' ? template.id : undefined;
+		if (id === undefined) continue;
+
+		const name = typeof template.name === 'string' && template.name !== '' ? template.name : id;
+		const width = typeof template.width === 'number' ? template.width : undefined;
+		const height = typeof template.height === 'number' ? template.height : undefined;
+
+		const label = width !== undefined && height !== undefined ? `${name} (${width}x${height})` : name;
+
+		if (needle !== '' && !label.toLowerCase().includes(needle) && !id.toLowerCase().includes(needle)) {
+			continue;
+		}
+
+		results.push({ name: label, value: id });
+		if (results.length >= MAX_RESULTS) break;
+	}
+
+	return { results };
+}

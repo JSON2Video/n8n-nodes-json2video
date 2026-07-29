@@ -168,3 +168,113 @@ Additional live checks worth doing in the same session:
     node, confirm nothing in this node retries the submission itself (each
     retry is a new paid render — that is n8n's own behaviour and the reason
     the README must warn about it).
+
+---
+
+## Phase 5 — Template resource
+
+Operations implemented: **Get Many**, **Get**, **Create**, **Update**,
+**Duplicate**, **Delete**, **Get Library**. Contract:
+`integrations/shared/operations.md` → "Resource: Template" + Appendix B
+(B8, B10) + Appendix C.
+
+### Automated checks (done, no API key needed)
+
+```bash
+cd integrations/n8n
+npm run lint    # clean
+npm run build   # clean
+npm test        # 70 tests, 6 files
+```
+
+What `test/template.test.ts` locks down:
+
+| Area | Covers |
+|---|---|
+| `withDualTemplateId` (B8) | `templateId` → also emits `id`; `id` → also emits `templateId`; a Duplicate response's extra `name` field survives; a response with neither key is untouched |
+| `parseTagsParameter` | Comma-split + trim, empty segments dropped, arrays passed through trimmed, empty/non-string input → `[]` |
+| `applyClientSideLimit` (B10) | Return All ignores Limit; Limit slices when Return All is off; a Limit larger than the list or non-positive/NaN falls back to the full list |
+| `templateHasTag` | Case-insensitive match, absent tag, empty needle matches everything |
+| `collectSortedTags` | Union + dedupe + sort across templates, empty when nothing has tags — backs the Get Many → Tag dropdown |
+| `buildTemplateBody` | Create shape with all fields; Update sends only what changed; empty name/prompt/tags array are omitted, not sent as empty strings |
+| `buildDeleteTemplateResponse` | The node echoes the deleted template ID that the raw `DELETE /templates` response omits |
+
+`test/movie.test.ts`, `movieRequestBody.test.ts`, `polling.test.ts` and
+`errors.test.ts` are unchanged and still green (Phase 4 regression guard).
+
+### Live checks pending — run these the moment the API key arrives
+
+Still **not performed**: there is no JSON2Video API key in this environment
+(Phase 0 reserves one). Start the sandbox with `npm run dev`, add the
+**JSON2Video API** credential (needs at least the `editor` role for Create,
+Update, Duplicate and Delete — a `render`-only key must fail those four with
+"This API key needs the Editor role to manage templates").
+
+1. **Get Many.** With no Additional Options, expect one item per template,
+   sorted by `updated_at` descending. Set *Return All* off with *Limit* 2 on
+   an account with more than 2 templates and confirm exactly 2 items come
+   back (client-side slicing — the API has no server-side pagination here,
+   Appendix B / B10). Then set *Return All* on and confirm every template
+   appears. Open Additional Options → **Tag**: confirm the dropdown lists
+   the account's own tags (deduplicated, sorted, backed by
+   `getTemplateTags`), pick one, and confirm only matching templates are
+   returned.
+2. **Get.** Pick a template via the **Template** resource locator's *From
+   List* mode (must call `GET /templates` and list the account's templates —
+   an empty list without erroring means the key's role is too low or the
+   list search silently failed; *By ID* must keep working either way).
+   Confirm the response contains `movie` verbatim (as a string or object,
+   whichever the template was stored as — do not expect it pre-parsed).
+   Toggle *Simplify* off and confirm the raw envelope (`{ success, template,
+   timestamp }`) appears instead. Set *Variables Format* to **JSON Schema**
+   and confirm `template.movie` is absent and `template.variables` holds a
+   JSON Schema document instead.
+3. **Create.** Fill *Name* and leave the pre-filled example Movie JSON.
+   Execute and expect `{ success: true, templateId: "<20-char id>", id:
+   "<same 20-char id>", timestamp }` — both keys must carry the same value
+   (Appendix B / B8). Add *Tags* (`demo, showcase`) and an *AI Prompt* in
+   Additional Options and confirm they land on the template (check with Get).
+   Confirm the new template now appears in the **Template** resource
+   locator's *From List* mode on this same node (Movie → Create's template
+   picker too).
+4. **Update.** Pick the template created in step 3, set *Update Fields →
+   Name* only, leave Movie JSON/Tags/AI Prompt empty. Execute and confirm
+   with Get that only the name changed — tags, prompt and movie body must be
+   untouched. Then update *Movie JSON* alone and confirm with Get that it
+   was replaced wholesale (not merged). Try Update with *Update Fields*
+   completely empty and confirm the node fails client-side with "Update
+   Fields must include at least one field to change" — no request should
+   reach the API.
+5. **Duplicate.** Use the **Source Template ID** resource locator's *From
+   Library* mode (must call `GET /templates/library` and list public
+   templates labelled `Name (WxH)`) to copy a library template into the
+   account with no *Name* override. Confirm the response's `name` ends in
+   " (custom)" and that `templateId`/`id` both appear (B8). Repeat with
+   *From List* against one of the account's own templates, an explicit
+   *Name*, and *Variables* filled in via both the key/value fields and the
+   JSON toggle — confirm the variables were deep-merged into the copy (Get
+   the new template and inspect `movie`).
+6. **Delete.** Delete the template created in step 3. Expect `{ success:
+   true, templateId: "<id>", deleted: true }` (the raw API response has
+   neither `templateId` nor `id` — confirm the node is the one adding it).
+   Confirm the template no longer appears in Get Many, and that Get on the
+   deleted ID now 404s with "Template `<id>` not found".
+7. **Get Library.** Run with default options and confirm items come back
+   sorted by `updated_at` descending, each with `video_url` and
+   `thumbnail_url`, and **no** `movie` field (the library never returns it —
+   confirm the description's guidance to Duplicate-then-Get holds). Set
+   *Additional Options → Tags* to a tag combination and confirm the result
+   always includes every published template plus any carrying one of the
+   given tags (a genuine server-side filter, unlike Get Many's client-side
+   Tag). Test *Return All* off with a small *Limit* and confirm client-side
+   slicing again.
+8. **Role gating.** With a `render`-only API key, confirm Create, Update,
+   Duplicate and Delete all fail with "This API key needs the Editor role to
+   manage templates" (or the verbatim `Insufficient permissions` API
+   message), while Get Many, Get and Get Library keep working.
+9. **Continue On Fail.** Enable it on a Get with a non-existent template ID
+   and confirm the output item is `{ error: "Template <id> not found" }`
+   instead of the node throwing.
+10. **Movie → Create still works.** Confirm the Movie resource's Template
+    resourceLocator (unchanged by this phase) still lists templates and
+    renders successfully — Phase 5 must not regress Phase 4.
