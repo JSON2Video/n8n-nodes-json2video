@@ -424,3 +424,45 @@ operation). Item 1 is the Phase 6 acceptance criterion in
     mapping (n8n's *Item Linking* view).
 14. **Phases 4 and 5 not regressed.** Re-run one Movie → Render and Wait and
     one Template → Get Many in the same workflow.
+
+## Phase 8 — CI/CD: provenance publishing
+
+### Automated checks (done)
+
+- `.github/workflows/ci.yml` — lint + build + `npm test` (166 tests) on every
+  push/PR to `main`. Green on GitHub Actions.
+- `.github/workflows/publish.yml` — scaffolded via
+  `n8n-node release --init-workflow` (`@n8n/node-cli` 0.41.2), cross-checked
+  against `n8n-io/n8n-nodes-starter`. Fixed a template bug where Handlebars
+  swallowed the literal `${{ secrets.NPM_TOKEN }}` GitHub Actions expression
+  (rendered as a bare `$`) because the raw template already uses
+  double-brace syntax that Handlebars itself parses. Triggers on tag push
+  matching `*.*.*`, requests `id-token: write`, runs on Node `lts/*`
+  (resolved to Node 24 at time of release — satisfies the ≥20 requirement),
+  and publishes with `NPM_CONFIG_PROVENANCE=true` via `npm run release`
+  (`n8n-node release`, which detects `GITHUB_ACTIONS` and runs
+  lint → build → `npm publish` in that mode).
+- **`0.2.0` released 2026-07-29 as the pipeline-validation release** — the
+  first version ever published through this GitHub Actions workflow with npm
+  provenance (npm trusted publisher, OIDC, no `NPM_TOKEN` secret configured
+  or needed). `0.0.1` was a manual `--ignore-scripts` placeholder publish used
+  only to reserve the package name on npm; it was never a real release and
+  has no provenance. Verified:
+  - `npm view n8n-nodes-json2video@0.2.0` shows `published ... by GitHub
+    Actions <npm-oidc-no-reply@github.com>`.
+  - `curl https://registry.npmjs.org/-/npm/v1/attestations/n8n-nodes-json2video@0.2.0`
+    returns a sigstore attestation bundle with a Rekor transparency-log entry.
+  - `npm audit signatures` after installing the package in a scratch
+    directory reports the package among those with "verified attestations".
+  - `dist-tags.latest` is `0.2.0`.
+  - GitHub release `0.2.0` published at
+    <https://github.com/JSON2Video/n8n-nodes-json2video/releases/tag/0.2.0>.
+
+### Not done yet
+
+- **`1.0.0` is reserved for after a live end-to-end pass** against the real
+  JSON2Video API (needs the Phase 0 test API key, not yet available — see the
+  "Live checks pending" sections above). Do not cut `1.0.0` until those pass.
+- Install test on a clean self-hosted n8n instance (`Settings → Community
+  Nodes → n8n-nodes-json2video`) — still pending, tracked for Phase 8's
+  acceptance criteria / Phase 9 submission prep.
