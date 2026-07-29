@@ -37,34 +37,35 @@ export const movieOperations: INodeProperties[] = [
 				name: 'Create',
 				value: 'create',
 				description:
-					'Submit a render job and return immediately with a project ID. The render runs asynchronously — pair this with a Webhook URL or a later Get Status call. Each call consumes credits, so never retry it blindly.',
+					'Submit a render job and return immediately with a 16-character project ID. The render runs asynchronously and the video URL is not available yet — pair this with a Webhook URL or a later Get Status call. Each call consumes credits (1 credit per second of output video), so never retry it blindly.',
 				action: 'Create a movie',
 			},
 			{
 				name: 'Delete',
 				value: 'delete',
 				description:
-					'Delete the rendered video file of a movie before its automatic 7-day expiry. The render history entry is kept.',
+					'Delete the rendered video file of a movie before its automatic 7-day expiry. The render history entry is kept, so credits already spent are not refunded.',
 				action: 'Delete a movie',
 			},
 			{
 				name: 'Get Many',
 				value: 'getAll',
-				description: 'List the movies rendered by this account within a date range',
+				description:
+					'List the movies rendered by this account within a date range, one output item per movie',
 				action: 'Get many movies',
 			},
 			{
 				name: 'Get Status',
 				value: 'getStatus',
 				description:
-					'Get the current status of one movie, including the video URL once the render is done',
+					'Get the current status of one movie by project ID. Returns the video URL, duration in seconds and file size in bytes once the status is done.',
 				action: 'Get a movie status',
 			},
 			{
 				name: 'Render and Wait',
 				value: 'renderAndWait',
 				description:
-					'Submit a render job and wait until it finishes, then return the finished movie including the video URL. Holds the n8n execution open for the whole render.',
+					'Submit a render job and poll until it finishes, then return the finished movie including the video URL, duration in seconds and file size in bytes. Holds the n8n execution open for the whole render, so use Create plus a Webhook URL for renders longer than the n8n execution limit.',
 				action: 'Render a movie and wait',
 			},
 		],
@@ -88,16 +89,17 @@ const inputModeFields: INodeProperties[] = [
 			{
 				name: 'Movie JSON',
 				value: 'json',
-				description: 'Send a full Movie JSON document',
+				description: 'Send a full Movie JSON document describing every scene and element',
 			},
 			{
 				name: 'Template',
 				value: 'template',
-				description: 'Render a saved template and fill in its variables',
+				description: 'Render a template saved in the account and fill in its variables',
 			},
 		],
 		default: 'template',
-		description: 'How to build the movie: from a saved template plus variables, or from raw Movie JSON',
+		description:
+			'How to build the movie: from a saved template plus variables, or from a raw Movie JSON document',
 	},
 	{
 		displayName: 'Template',
@@ -130,7 +132,7 @@ const inputModeFields: INodeProperties[] = [
 			},
 		],
 		description:
-			'The saved template to render. This is the 20-character template ID returned by Template: Create, not the template name.',
+			'The saved template to render. The value sent is the 20-character template ID returned by Template: Create, not the template name.',
 	},
 	{
 		displayName: 'Specify Variables',
@@ -192,12 +194,12 @@ const inputModeFields: INodeProperties[] = [
 						name: 'value',
 						type: 'string',
 						default: '',
-						description: 'Value that replaces the placeholder, sent as text',
+						description: 'Value that replaces the placeholder. Always sent as text.',
 					},
 				],
 			},
 		],
-		description: 'Values for the {{placeholders}} inside the template',
+		description: 'Values for the {{placeholders}} inside the template, one entry per placeholder',
 	},
 	{
 		displayName: 'Variables (JSON)',
@@ -235,7 +237,7 @@ const inputModeFields: INodeProperties[] = [
 			},
 		},
 		description:
-			'The full Movie JSON document to render. See the Movie JSON reference at https://json2video.com/docs/v2/. The node checks that it parses as JSON before sending it.',
+			'The full Movie JSON document to render: a JSON object with a scenes array, each scene holding an elements array. See the Movie JSON reference at https://json2video.com/docs/v2/. The node checks that it parses as a JSON object before sending it.',
 	},
 ];
 
@@ -316,7 +318,7 @@ const movieOptionsCollection: INodeProperties = {
 				maxValue: 120,
 			},
 			default: 25,
-			description: 'Frames per second of the output video',
+			description: 'Frames per second of the output video, from 1 to 120. The API default is 25.',
 		},
 		{
 			displayName: 'Height',
@@ -362,7 +364,8 @@ const movieOptionsCollection: INodeProperties = {
 				},
 			],
 			default: 'high',
-			description: 'Render quality. Lower quality renders faster and costs the same.',
+			description:
+				'Encoding quality of the output video. Lower quality renders faster and produces a smaller file; the credit cost is identical.',
 		},
 		{
 			displayName: 'Resolution',
@@ -424,9 +427,9 @@ const movieOptionsCollection: INodeProperties = {
 			name: 'webhookUrl',
 			type: 'string',
 			default: '',
-			placeholder: 'https://n8n.example.com/webhook/json2video',
+			placeholder: 'e.g. https://n8n.example.com/webhook/json2video',
 			description:
-				'URL called with a POST once the render finishes, successfully or not. Must be publicly reachable over HTTPS. Leave empty if you poll instead.',
+				'URL called with an HTTP POST once the render finishes, successfully or not. Must be publicly reachable over HTTPS — an n8n Webhook node production URL works. Leave empty if you poll for the status instead.',
 		},
 		{
 			displayName: 'Width',
@@ -448,6 +451,23 @@ const movieOptionsCollection: INodeProperties = {
 	],
 };
 
+const renderAndWaitOutputFields: INodeProperties[] = [
+	{
+		displayName: 'Simplify',
+		name: 'simplify',
+		type: 'boolean',
+		default: true,
+		displayOptions: {
+			show: {
+				resource: ['movie'],
+				operation: ['renderAndWait'],
+			},
+		},
+		hint: 'Simplified output is the movie object itself plus the remaining quota',
+		description: 'Whether to return a simplified version of the response instead of the raw data',
+	},
+];
+
 const waitOptionsCollection: INodeProperties = {
 	displayName: 'Wait Options',
 	name: 'waitOptions',
@@ -460,6 +480,7 @@ const waitOptionsCollection: INodeProperties = {
 			operation: ['renderAndWait'],
 		},
 	},
+	description: 'How long to wait for the render, how often to check, and what to do if it fails',
 	options: [
 		{
 			displayName: 'Fail On Render Error',
@@ -511,11 +532,12 @@ const getStatusFields: INodeProperties[] = [
 				operation: ['getStatus'],
 			},
 		},
-		description: 'The 16-character project ID returned by Movie: Create',
+		description:
+			'The 16-character project ID returned by Movie: Create or Movie: Render and Wait',
 	},
 	{
 		displayName: 'Simplify',
-		name: 'simple',
+		name: 'simplify',
 		type: 'boolean',
 		default: true,
 		displayOptions: {
@@ -539,6 +561,7 @@ const getStatusFields: INodeProperties[] = [
 				operation: ['getStatus'],
 			},
 		},
+			description: 'Optional controls over how much of the movie record is returned',
 		options: [
 			{
 				displayName: 'Include Movie JSON',
@@ -595,6 +618,7 @@ const getAllFields: INodeProperties[] = [
 				operation: ['getAll'],
 			},
 		},
+			description: 'Optional filters and output controls for the movie listing',
 		options: [
 			{
 				displayName: 'End Date',
@@ -602,7 +626,7 @@ const getAllFields: INodeProperties[] = [
 				type: 'dateTime',
 				default: '',
 				description:
-					'End of the date range. Defaults to the end of the current day. The range may not exceed 3 months.',
+					'End of the date range, as an ISO-8601 date or date-time. Defaults to the end of the current day. The range may not exceed 3 months.',
 			},
 			{
 				displayName: 'Include Movie JSON',
@@ -617,7 +641,8 @@ const getAllFields: INodeProperties[] = [
 				name: 'dateStart',
 				type: 'dateTime',
 				default: '',
-				description: 'Start of the date range. Defaults to the first day of the current month.',
+				description:
+					'Start of the date range, as an ISO-8601 date or date-time. Defaults to the first day of the current month.',
 			},
 		],
 	},
@@ -645,6 +670,7 @@ const deleteFields: INodeProperties[] = [
 export const movieFields: INodeProperties[] = [
 	...inputModeFields,
 	movieOptionsCollection,
+	...renderAndWaitOutputFields,
 	waitOptionsCollection,
 	...getStatusFields,
 	...getAllFields,

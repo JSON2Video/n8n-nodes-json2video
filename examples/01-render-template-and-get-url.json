@@ -1,0 +1,128 @@
+{
+	"name": "JSON2Video — Render a template and get the video URL",
+	"nodes": [
+		{
+			"parameters": {},
+			"id": "b1a4a0c2-6f2e-4f1c-9d31-1a0c8e5f7a01",
+			"name": "When clicking 'Execute workflow'",
+			"type": "n8n-nodes-base.manualTrigger",
+			"typeVersion": 1,
+			"position": [-140, 0]
+		},
+		{
+			"parameters": {
+				"assignments": {
+					"assignments": [
+						{
+							"id": "1f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e5f",
+							"name": "quote_text",
+							"value": "You cannot escape the responsibility of tomorrow by evading it today.",
+							"type": "string"
+						},
+						{
+							"id": "2f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e60",
+							"name": "background_image",
+							"value": "https://assets.json2video.com/assets/images/licoln.jpg",
+							"type": "string"
+						}
+					]
+				},
+				"options": {}
+			},
+			"id": "b1a4a0c2-6f2e-4f1c-9d31-1a0c8e5f7a02",
+			"name": "Quote of the day",
+			"type": "n8n-nodes-base.set",
+			"typeVersion": 3.4,
+			"position": [80, 0]
+		},
+		{
+			"parameters": {
+				"resource": "movie",
+				"operation": "renderAndWait",
+				"inputMode": "template",
+				"templateId": {
+					"__rl": true,
+					"value": "LerKrmBfiqaIgBuacLWn",
+					"mode": "id"
+				},
+				"specifyVariables": "keypair",
+				"variablesUi": {
+					"variable": [
+						{
+							"name": "quote_text",
+							"value": "={{ $json.quote_text }}"
+						},
+						{
+							"name": "background_image",
+							"value": "={{ $json.background_image }}"
+						}
+					]
+				},
+				"additionalOptions": {
+					"resolution": "instagram-story",
+					"quality": "high"
+				},
+				"waitOptions": {
+					"timeout": 900
+				}
+			},
+			"id": "b1a4a0c2-6f2e-4f1c-9d31-1a0c8e5f7a03",
+			"name": "Render quote video",
+			"type": "n8n-nodes-json2video.json2Video",
+			"typeVersion": 1,
+			"position": [300, 0],
+			"credentials": {
+				"json2VideoApi": {
+					"name": "JSON2Video account"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"assignments": {
+					"assignments": [
+						{
+							"id": "3f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e61",
+							"name": "video_url",
+							"value": "={{ $json.url }}",
+							"type": "string"
+						},
+						{
+							"id": "4f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e62",
+							"name": "duration_seconds",
+							"value": "={{ $json.duration }}",
+							"type": "number"
+						},
+						{
+							"id": "5f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e63",
+							"name": "size_bytes",
+							"value": "={{ $json.size }}",
+							"type": "number"
+						}
+					]
+				},
+				"options": {}
+			},
+			"id": "b1a4a0c2-6f2e-4f1c-9d31-1a0c8e5f7a04",
+			"name": "Video details",
+			"type": "n8n-nodes-base.set",
+			"typeVersion": 3.4,
+			"position": [520, 0]
+		}
+	],
+	"connections": {
+		"When clicking 'Execute workflow'": {
+			"main": [[{ "node": "Quote of the day", "type": "main", "index": 0 }]]
+		},
+		"Quote of the day": {
+			"main": [[{ "node": "Render quote video", "type": "main", "index": 0 }]]
+		},
+		"Render quote video": {
+			"main": [[{ "node": "Video details", "type": "main", "index": 0 }]]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	},
+	"pinData": {}
+}

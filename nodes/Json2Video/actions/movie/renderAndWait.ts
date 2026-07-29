@@ -37,6 +37,10 @@ export async function execute(
 ): Promise<INodeExecutionData[]> {
 	const body = buildMovieRequestBody.call(this, itemIndex);
 
+	const simplify = this.getNodeParameter('simplify', itemIndex, true) as boolean;
+	const shapeOutput = (response: IDataObject): IDataObject =>
+		simplify ? simplifyMovieResponse(response) : response;
+
 	const waitOptions = this.getNodeParameter('waitOptions', itemIndex, {}) as IDataObject;
 	const pollInterval = clampPollInterval(
 		Number(waitOptions.pollInterval ?? DEFAULT_POLL_INTERVAL_SECONDS),
@@ -120,7 +124,7 @@ export async function execute(
 		const status = movie.status;
 
 		if (status === 'done') {
-			return [{ json: simplifyMovieResponse(response), pairedItem: { item: itemIndex } }];
+			return [{ json: shapeOutput(response), pairedItem: { item: itemIndex } }];
 		}
 
 		if (status === 'error' || status === 'timeout') {
@@ -132,7 +136,7 @@ export async function execute(
 						: 'The render failed';
 
 			if (!failOnRenderError) {
-				return [{ json: simplifyMovieResponse(response), pairedItem: { item: itemIndex } }];
+				return [{ json: shapeOutput(response), pairedItem: { item: itemIndex } }];
 			}
 
 			const description =

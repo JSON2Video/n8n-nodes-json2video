@@ -1,0 +1,128 @@
+{
+	"name": "JSON2Video — Long render with a webhook callback",
+	"nodes": [
+		{
+			"parameters": {},
+			"id": "e4d7d3f5-9b5b-4c4f-8a64-4d3f1b8c0d01",
+			"name": "When clicking 'Execute workflow'",
+			"type": "n8n-nodes-base.manualTrigger",
+			"typeVersion": 1,
+			"position": [-140, -160]
+		},
+		{
+			"parameters": {
+				"resource": "movie",
+				"operation": "create",
+				"inputMode": "template",
+				"templateId": {
+					"__rl": true,
+					"value": "LerKrmBfiqaIgBuacLWn",
+					"mode": "id"
+				},
+				"specifyVariables": "keypair",
+				"variablesUi": {
+					"variable": [
+						{
+							"name": "headline",
+							"value": "Summer sale"
+						}
+					]
+				},
+				"additionalOptions": {
+					"resolution": "full-hd",
+					"webhookUrl": "https://n8n.example.com/webhook/json2video-render-done",
+					"clientData": {
+						"data": [
+							{
+								"name": "order_id",
+								"value": "A-1042"
+							}
+						]
+					}
+				}
+			},
+			"id": "e4d7d3f5-9b5b-4c4f-8a64-4d3f1b8c0d02",
+			"name": "Submit render",
+			"type": "n8n-nodes-json2video.json2Video",
+			"typeVersion": 1,
+			"position": [80, -160],
+			"credentials": {
+				"json2VideoApi": {
+					"name": "JSON2Video account"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "json2video-render-done",
+				"options": {}
+			},
+			"id": "e4d7d3f5-9b5b-4c4f-8a64-4d3f1b8c0d03",
+			"name": "Render finished",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [-140, 120],
+			"webhookId": "e4d7d3f5-9b5b-4c4f-8a64-4d3f1b8c0d03"
+		},
+		{
+			"parameters": {
+				"resource": "movie",
+				"operation": "getStatus",
+				"projectId": "={{ $json.body.project }}",
+				"additionalOptions": {}
+			},
+			"id": "e4d7d3f5-9b5b-4c4f-8a64-4d3f1b8c0d04",
+			"name": "Fetch the finished movie",
+			"type": "n8n-nodes-json2video.json2Video",
+			"typeVersion": 1,
+			"position": [80, 120],
+			"credentials": {
+				"json2VideoApi": {
+					"name": "JSON2Video account"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"assignments": {
+					"assignments": [
+						{
+							"id": "8f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e66",
+							"name": "video_url",
+							"value": "={{ $json.url }}",
+							"type": "string"
+						},
+						{
+							"id": "9f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e67",
+							"name": "order_id",
+							"value": "={{ $json['client-data'].order_id }}",
+							"type": "string"
+						}
+					]
+				},
+				"options": {}
+			},
+			"id": "e4d7d3f5-9b5b-4c4f-8a64-4d3f1b8c0d05",
+			"name": "Deliver the video",
+			"type": "n8n-nodes-base.set",
+			"typeVersion": 3.4,
+			"position": [300, 120]
+		}
+	],
+	"connections": {
+		"When clicking 'Execute workflow'": {
+			"main": [[{ "node": "Submit render", "type": "main", "index": 0 }]]
+		},
+		"Render finished": {
+			"main": [[{ "node": "Fetch the finished movie", "type": "main", "index": 0 }]]
+		},
+		"Fetch the finished movie": {
+			"main": [[{ "node": "Deliver the video", "type": "main", "index": 0 }]]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	},
+	"pinData": {}
+}

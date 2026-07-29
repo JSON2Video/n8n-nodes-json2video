@@ -46,7 +46,10 @@ export class Json2Video implements INodeType {
 		group: ['transform'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
-		description: 'Create and render videos from JSON or templates via the JSON2Video API',
+		// This string is the tool description an n8n AI Agent reads before it
+		// decides to call the node, so it names the three resources explicitly.
+		description:
+			'Create and render videos with JSON2Video. Render a Movie JSON document or a saved template, check render status, manage templates, and upload media files to the account Drive.',
 		defaults: {
 			name: 'JSON2Video',
 		},

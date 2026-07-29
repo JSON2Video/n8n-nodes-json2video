@@ -34,44 +34,50 @@ export const templateOperations: INodeProperties[] = [
 			{
 				name: 'Create',
 				value: 'create',
-				description: 'Save a new template from a Movie JSON document with {{variable}} placeholders',
+				description:
+					'Save a new template from a Movie JSON document with {{variable}} placeholders. Returns the new 20-character template ID.',
 				action: 'Create a template',
 			},
 			{
 				name: 'Delete',
 				value: 'delete',
-				description: 'Delete a template. Renders already in flight are unaffected.',
+				description:
+					'Delete a template by ID. Renders already in flight are unaffected, but later renders referencing the ID fail.',
 				action: 'Delete a template',
 			},
 			{
 				name: 'Duplicate',
 				value: 'duplicate',
 				description:
-					'Copy a template — your own or one from the public library — into your account, optionally filling in variables',
+					'Copy a template — your own or one from the public library — into this account and return the new 20-character template ID, optionally filling in variables',
 				action: 'Duplicate a template',
 			},
 			{
 				name: 'Get',
 				value: 'get',
-				description: 'Get one template, including its stored Movie JSON',
+				description:
+					'Get one template by ID, including its stored Movie JSON. The movie field is returned exactly as stored, which may be a JSON string or a JSON object.',
 				action: 'Get a template',
 			},
 			{
 				name: 'Get Library',
 				value: 'getLibrary',
-				description: 'List the curated public template gallery published by JSON2Video',
+				description:
+					'List the curated public template gallery published by JSON2Video, one output item per template. Use Duplicate to copy one into this account before rendering it.',
 				action: 'Get many library templates',
 			},
 			{
 				name: 'Get Many',
 				value: 'getAll',
-				description: "List this account's templates",
+				description:
+					"List this account's own templates, one output item per template, with their IDs, names and tags",
 				action: 'Get many templates',
 			},
 			{
 				name: 'Update',
 				value: 'update',
-				description: 'Change the name, Movie JSON, tags or AI prompt of an existing template. Fields left empty are not modified.',
+				description:
+					'Change the name, Movie JSON, tags or AI prompt of an existing template. Only the fields set are written; the rest are left unchanged.',
 				action: 'Update a template',
 			},
 		],
@@ -123,6 +129,7 @@ const getAllFields: INodeProperties[] = [
 				operation: ['getAll'],
 			},
 		},
+			description: 'Optional filters for the template listing',
 		options: [
 			{
 				displayName: 'Tag Name or ID',
@@ -165,7 +172,7 @@ const getFields: INodeProperties[] = [
 				displayName: 'By ID',
 				name: 'id',
 				type: 'string',
-				placeholder: 'e.g. abc123def456ghi789jk',
+				placeholder: 'e.g. LerKrmBfiqaIgBuacLWn',
 			},
 		],
 		description:
@@ -197,13 +204,15 @@ const getFields: INodeProperties[] = [
 				operation: ['get'],
 			},
 		},
+			description: 'Optional controls over which parts of the template are returned',
 		options: [
 			{
 				displayName: 'Scopes',
 				name: 'scopes',
 				type: 'string',
 				default: 'movie',
-				description: "Comma-separated list of parts of the template to load, for example 'movie,prompt'",
+				description:
+					'Comma-separated list of the template parts to load. Supported values are movie (the stored Movie JSON) and prompt (the AI prompt), for example "movie,prompt".',
 			},
 			{
 				displayName: 'Variables Format',
@@ -223,6 +232,8 @@ const getFields: INodeProperties[] = [
 					},
 				],
 				default: '',
+				description:
+					'Shape of the returned template: the stored Movie JSON, or a JSON Schema describing its variables',
 			},
 		],
 	},
@@ -274,20 +285,23 @@ const createFields: INodeProperties[] = [
 				operation: ['create'],
 			},
 		},
+			description: 'Optional metadata stored alongside the template',
 		options: [
 			{
 				displayName: 'AI Prompt',
 				name: 'prompt',
 				type: 'string',
 				default: '',
-				description: "Optional prompt describing what this template produces, used by JSON2Video's AI features",
+				description:
+					"Prompt describing what this template produces, used by JSON2Video's AI features",
 			},
 			{
 				displayName: 'Tags',
 				name: 'tags',
 				type: 'string',
 				default: '',
-				description: 'Comma-separated list of tags used to organise and filter templates',
+				description:
+					'Comma-separated list of tags used to organize and filter templates, for example "promo,vertical"',
 			},
 		],
 	},
@@ -320,10 +334,11 @@ const updateFields: INodeProperties[] = [
 				displayName: 'By ID',
 				name: 'id',
 				type: 'string',
-				placeholder: 'e.g. abc123def456ghi789jk',
+				placeholder: 'e.g. LerKrmBfiqaIgBuacLWn',
 			},
 		],
-		description: 'The template to update',
+		description:
+			'The template to update. The value sent is the 20-character template ID, not the template name.',
 	},
 	{
 		displayName: 'Update Fields',
@@ -346,7 +361,7 @@ const updateFields: INodeProperties[] = [
 				name: 'prompt',
 				type: 'string',
 				default: '',
-				description: 'Replacement AI prompt',
+				description: 'Replacement AI prompt describing what this template produces',
 			},
 			{
 				displayName: 'Movie JSON',
@@ -370,7 +385,8 @@ const updateFields: INodeProperties[] = [
 				name: 'tags',
 				type: 'string',
 				default: '',
-				description: 'Comma-separated list of tags. Replaces the existing tags.',
+				description:
+					'Comma-separated list of tags. Replaces the existing tags rather than adding to them.',
 			},
 		],
 	},
@@ -398,7 +414,8 @@ const duplicateVariablesFields: INodeProperties[] = [
 			},
 		],
 		default: 'keypair',
-		description: 'How to provide the variables that are deep-merged into the copy',
+		description:
+			'How to provide the variables that are deep-merged into the copy. Values entered as fields are sent as text; use JSON for numbers, booleans, arrays or nested objects.',
 	},
 	{
 		displayName: 'Variables',
@@ -426,14 +443,15 @@ const duplicateVariablesFields: INodeProperties[] = [
 						name: 'name',
 						type: 'string',
 						default: '',
-						description: 'Name of the variable inside the copied template, without braces',
+						description:
+							'Name of the variable inside the copied template, without the {{ }} braces',
 					},
 					{
 						displayName: 'Value',
 						name: 'value',
 						type: 'string',
 						default: '',
-						description: 'Value that replaces the variable, sent as text',
+						description: 'Value that replaces the variable. Always sent as text.',
 					},
 				],
 			},
@@ -496,7 +514,7 @@ const duplicateFields: INodeProperties[] = [
 				displayName: 'By ID',
 				name: 'id',
 				type: 'string',
-				placeholder: 'e.g. abc123def456ghi789jk',
+				placeholder: 'e.g. LerKrmBfiqaIgBuacLWn',
 			},
 		],
 		description:
@@ -546,10 +564,11 @@ const deleteFields: INodeProperties[] = [
 				displayName: 'By ID',
 				name: 'id',
 				type: 'string',
-				placeholder: 'e.g. abc123def456ghi789jk',
+				placeholder: 'e.g. LerKrmBfiqaIgBuacLWn',
 			},
 		],
-		description: 'The template to delete. This cannot be undone.',
+		description:
+			'The template to delete, addressed by its 20-character template ID. This cannot be undone.',
 	},
 ];
 
@@ -597,6 +616,7 @@ const getLibraryFields: INodeProperties[] = [
 				operation: ['getLibrary'],
 			},
 		},
+			description: 'Optional filters for the library listing',
 		options: [
 			{
 				displayName: 'Tags',

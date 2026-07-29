@@ -1,0 +1,127 @@
+{
+	"name": "JSON2Video — Turn the newest RSS item into a social reel",
+	"nodes": [
+		{
+			"parameters": {
+				"rule": {
+					"interval": [
+						{
+							"field": "hours",
+							"hoursInterval": 6
+						}
+					]
+				}
+			},
+			"id": "c2b5b1d3-7f3f-4a2d-8e42-2b1d9f6a8b01",
+			"name": "Every 6 hours",
+			"type": "n8n-nodes-base.scheduleTrigger",
+			"typeVersion": 1.2,
+			"position": [-140, 0]
+		},
+		{
+			"parameters": {
+				"url": "https://json2video.com/blog/rss.xml",
+				"options": {}
+			},
+			"id": "c2b5b1d3-7f3f-4a2d-8e42-2b1d9f6a8b02",
+			"name": "Read blog feed",
+			"type": "n8n-nodes-base.rssFeedRead",
+			"typeVersion": 1.1,
+			"position": [80, 0]
+		},
+		{
+			"parameters": {
+				"maxItems": 1
+			},
+			"id": "c2b5b1d3-7f3f-4a2d-8e42-2b1d9f6a8b03",
+			"name": "Newest post only",
+			"type": "n8n-nodes-base.limit",
+			"typeVersion": 1,
+			"position": [300, 0]
+		},
+		{
+			"parameters": {
+				"resource": "movie",
+				"operation": "renderAndWait",
+				"inputMode": "template",
+				"templateId": {
+					"__rl": true,
+					"value": "LerKrmBfiqaIgBuacLWn",
+					"mode": "id"
+				},
+				"specifyVariables": "json",
+				"variablesJson": "={{ JSON.stringify({ headline: $json.title, body: $json.contentSnippet, link: $json.link }) }}",
+				"additionalOptions": {
+					"resolution": "instagram-story",
+					"quality": "high",
+					"clientData": {
+						"data": [
+							{
+								"name": "source_url",
+								"value": "={{ $json.link }}"
+							}
+						]
+					}
+				},
+				"waitOptions": {
+					"timeout": 900,
+					"pollInterval": 10
+				}
+			},
+			"id": "c2b5b1d3-7f3f-4a2d-8e42-2b1d9f6a8b04",
+			"name": "Render vertical reel",
+			"type": "n8n-nodes-json2video.json2Video",
+			"typeVersion": 1,
+			"position": [520, 0],
+			"credentials": {
+				"json2VideoApi": {
+					"name": "JSON2Video account"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"assignments": {
+					"assignments": [
+						{
+							"id": "6f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e64",
+							"name": "video_url",
+							"value": "={{ $json.url }}",
+							"type": "string"
+						},
+						{
+							"id": "7f5a0d1c-2b3e-4c5d-8e9f-0a1b2c3d4e65",
+							"name": "source_url",
+							"value": "={{ $json['client-data'].source_url }}",
+							"type": "string"
+						}
+					]
+				},
+				"options": {}
+			},
+			"id": "c2b5b1d3-7f3f-4a2d-8e42-2b1d9f6a8b05",
+			"name": "Ready to publish",
+			"type": "n8n-nodes-base.set",
+			"typeVersion": 3.4,
+			"position": [740, 0]
+		}
+	],
+	"connections": {
+		"Every 6 hours": {
+			"main": [[{ "node": "Read blog feed", "type": "main", "index": 0 }]]
+		},
+		"Read blog feed": {
+			"main": [[{ "node": "Newest post only", "type": "main", "index": 0 }]]
+		},
+		"Newest post only": {
+			"main": [[{ "node": "Render vertical reel", "type": "main", "index": 0 }]]
+		},
+		"Render vertical reel": {
+			"main": [[{ "node": "Ready to publish", "type": "main", "index": 0 }]]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	},
+	"pinData": {}
+}

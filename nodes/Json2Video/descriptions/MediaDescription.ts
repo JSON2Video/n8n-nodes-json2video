@@ -26,55 +26,64 @@ export const mediaOperations: INodeProperties[] = [
 			{
 				name: 'Create Folder',
 				value: 'createFolder',
-				description: 'Create a folder in the Drive. Creating a folder that already exists succeeds and changes nothing.',
+				description:
+					'Create a folder in the Drive, addressed by a path relative to the Drive root with no leading slash. Creating a folder that already exists succeeds and changes nothing.',
 				action: 'Create a folder',
 			},
 			{
 				name: 'Delete File',
 				value: 'deleteFile',
-				description: 'Delete one file from the Drive. This frees the storage it used and cannot be undone.',
+				description:
+					'Delete one file from the Drive by folder and file name. This frees the bytes it used and cannot be undone.',
 				action: 'Delete a file',
 			},
 			{
 				name: 'Delete Folder',
 				value: 'deleteFolder',
-				description: 'Delete an empty folder. Folders that still contain files are refused by the API.',
+				description:
+					'Delete an empty folder. Folders that still contain files are refused by the API, as are the root folder and the temp folder.',
 				action: 'Delete a folder',
 			},
 			{
 				name: 'Get File',
 				value: 'getFile',
-				description: 'Get one file by its path, including its public URL, size in bytes and upload status',
+				description:
+					'Get one file by its path relative to the Drive root, for example videos/clip.mp4. Returns its public URL, size in bytes and upload status.',
 				action: 'Get a file',
 			},
 			{
 				name: 'Get Folder Tree',
 				value: 'getFolderTree',
-				description: 'List every folder in the Drive with its file count and total size in bytes',
+				description:
+					'List every folder in the Drive, one output item per folder, with its file count and total size in bytes',
 				action: 'Get the folder tree',
 			},
 			{
 				name: 'Get Storage Usage',
 				value: 'getStorage',
-				description: 'Get how many bytes the Drive uses, the free allowance and whether uploads are blocked',
+				description:
+					'Get how many bytes the Drive uses, the free allowance in bytes, and whether uploads are currently blocked',
 				action: 'Get storage usage',
 			},
 			{
 				name: 'List Folder',
 				value: 'listFolder',
-				description: 'List the files in one folder, optionally filtered by media type or by name',
+				description:
+					'List the files in one folder, one output item per file, optionally filtered by media type or by name',
 				action: 'List a folder',
 			},
 			{
 				name: 'Move File',
 				value: 'moveFile',
-				description: 'Move a file to another folder, keeping its name. Moving into temp marks it temporary.',
+				description:
+					'Move a file to another folder, keeping its name. Moving into the temp folder marks the file temporary, so it is deleted automatically and stops counting towards the storage quota.',
 				action: 'Move a file',
 			},
 			{
 				name: 'Upload File',
 				value: 'upload',
-				description: 'Upload binary data from a previous node into the Drive and return its public URL',
+				description:
+					'Upload binary data from a previous node into the Drive and return its public URL, ready to use as the src of a movie element. Maximum 500 MB per file.',
 				action: 'Upload a file',
 			},
 		],
@@ -97,7 +106,7 @@ const uploadFields: INodeProperties[] = [
 		},
 		hint: 'The file is uploaded straight from memory — the node never writes it to disk',
 		description:
-			'Name of the binary property on the incoming item that holds the file to upload. Maximum 500 MB per file.',
+			'Name of the binary property on the incoming item that holds the file to upload, for example data on the output of an HTTP Request node. Maximum 500 MB per file.',
 	},
 	{
 		displayName: 'Additional Options',
@@ -111,6 +120,7 @@ const uploadFields: INodeProperties[] = [
 				operation: ['upload'],
 			},
 		},
+			description: 'Optional overrides for the destination, name and MIME type of the upload',
 		options: [
 			{
 				displayName: 'File Name',
@@ -130,7 +140,7 @@ const uploadFields: INodeProperties[] = [
 					loadOptionsMethod: 'getMediaFolders',
 				},
 				default: '',
-				hint: 'Leave empty for the root folder. Use temp for files that are deleted automatically and do not count towards the storage quota.',
+				hint: 'Leave empty for the root folder. Paths have no leading slash. Use temp for files that are deleted automatically and do not count towards the storage quota.',
 				description:
 					'Destination folder in your JSON2Video Drive. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 			},
@@ -264,6 +274,7 @@ const listFolderFields: INodeProperties[] = [
 				operation: ['listFolder'],
 			},
 		},
+			description: 'Optional filters for the file listing',
 		options: [
 			{
 				displayName: 'File Type',
@@ -292,7 +303,8 @@ const listFolderFields: INodeProperties[] = [
 					},
 				],
 				default: '',
-				description: 'Only return files of this media type, derived from the file MIME type',
+				description:
+					'Only return files of this media type, derived from the file MIME type',
 			},
 			{
 				displayName: 'Search',
@@ -421,7 +433,8 @@ const createFolderFields: INodeProperties[] = [
 		},
 		placeholder: 'e.g. marketing/2026',
 		hint: 'Nested paths are created in one call. Characters outside letters, numbers, slash, underscore and hyphen are removed.',
-		description: 'Folder to create, relative to the Drive root',
+		description:
+			'Folder to create, as a path relative to the Drive root with no leading slash, for example marketing/2026',
 	},
 ];
 
@@ -459,7 +472,7 @@ const getStorageFields: INodeProperties[] = [
 				operation: ['getStorage'],
 			},
 		},
-		hint: 'Simplified output is the storage object itself, without the API envelope',
+		hint: 'Simplified output is the storage object itself, without the API envelope. All sizes are in bytes.',
 		description: 'Whether to return a simplified version of the response instead of the raw data',
 	},
 ];

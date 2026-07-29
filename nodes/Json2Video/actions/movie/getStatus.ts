@@ -22,7 +22,7 @@ export async function execute(
 		throw new NodeOperationError(this.getNode(), (error as Error).message, { itemIndex });
 	}
 
-	const simple = this.getNodeParameter('simple', itemIndex, true) as boolean;
+	const simplify = this.getNodeParameter('simplify', itemIndex, true) as boolean;
 	const additionalOptions = this.getNodeParameter('additionalOptions', itemIndex, {}) as IDataObject;
 
 	const qs: IDataObject = { project: projectId };
@@ -34,7 +34,7 @@ export async function execute(
 
 	return [
 		{
-			json: simple ? simplifyMovieResponse(response) : response,
+			json: simplify ? simplifyMovieResponse(response) : response,
 			pairedItem: { item: itemIndex },
 		},
 	];

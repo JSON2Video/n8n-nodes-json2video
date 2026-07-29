@@ -29,8 +29,9 @@ export class Json2VideoApi implements ICredentialType {
 			},
 			default: '',
 			required: true,
+			placeholder: 'e.g. abCdEf1234567890',
 			description:
-				'Get your API key from the JSON2Video dashboard at https://json2video.com/dashboard/apikeys (Dashboard → API Keys). Start with a key using the Render role and only escalate if the workflow needs to manage templates or connections.',
+				'Create one in the JSON2Video dashboard under <a href="https://json2video.com/dashboard/apikeys" target="_blank">API Keys</a>. Start with a key carrying the Render role, and only escalate to Editor or Manager if the workflow needs to manage templates or connections.',
 		},
 	];
 

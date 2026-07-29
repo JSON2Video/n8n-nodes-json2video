@@ -1,0 +1,91 @@
+{
+	"name": "JSON2Video — Upload an asset, then use it in a movie",
+	"nodes": [
+		{
+			"parameters": {},
+			"id": "d3c6c2e4-8a4a-4b3e-9f53-3c2e0a7b9c01",
+			"name": "When clicking 'Execute workflow'",
+			"type": "n8n-nodes-base.manualTrigger",
+			"typeVersion": 1,
+			"position": [-140, 0]
+		},
+		{
+			"parameters": {
+				"url": "https://assets.json2video.com/assets/audios/wave-01.mp3",
+				"options": {
+					"response": {
+						"response": {
+							"responseFormat": "file",
+							"outputPropertyName": "data"
+						}
+					}
+				}
+			},
+			"id": "d3c6c2e4-8a4a-4b3e-9f53-3c2e0a7b9c02",
+			"name": "Download voiceover",
+			"type": "n8n-nodes-base.httpRequest",
+			"typeVersion": 4.2,
+			"position": [80, 0]
+		},
+		{
+			"parameters": {
+				"resource": "media",
+				"operation": "upload",
+				"binaryPropertyName": "data",
+				"additionalOptions": {
+					"folder": "n8n",
+					"fileName": "voiceover.mp3"
+				}
+			},
+			"id": "d3c6c2e4-8a4a-4b3e-9f53-3c2e0a7b9c03",
+			"name": "Upload to Drive",
+			"type": "n8n-nodes-json2video.json2Video",
+			"typeVersion": 1,
+			"position": [300, 0],
+			"credentials": {
+				"json2VideoApi": {
+					"name": "JSON2Video account"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"resource": "movie",
+				"operation": "renderAndWait",
+				"inputMode": "json",
+				"movieJson": "={{ JSON.stringify({\n  resolution: 'full-hd',\n  scenes: [\n    {\n      elements: [\n        { type: 'image', src: 'https://assets.json2video.com/assets/images/licoln.jpg', duration: -1 },\n        { type: 'text', text: 'Narrated with an uploaded voiceover', style: '003', duration: -1 },\n        { type: 'audio', src: $json.url }\n      ]\n    }\n  ]\n}) }}",
+				"additionalOptions": {
+					"quality": "high"
+				},
+				"waitOptions": {
+					"timeout": 900
+				}
+			},
+			"id": "d3c6c2e4-8a4a-4b3e-9f53-3c2e0a7b9c04",
+			"name": "Render movie with the upload",
+			"type": "n8n-nodes-json2video.json2Video",
+			"typeVersion": 1,
+			"position": [520, 0],
+			"credentials": {
+				"json2VideoApi": {
+					"name": "JSON2Video account"
+				}
+			}
+		}
+	],
+	"connections": {
+		"When clicking 'Execute workflow'": {
+			"main": [[{ "node": "Download voiceover", "type": "main", "index": 0 }]]
+		},
+		"Download voiceover": {
+			"main": [[{ "node": "Upload to Drive", "type": "main", "index": 0 }]]
+		},
+		"Upload to Drive": {
+			"main": [[{ "node": "Render movie with the upload", "type": "main", "index": 0 }]]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	},
+	"pinData": {}
+}
