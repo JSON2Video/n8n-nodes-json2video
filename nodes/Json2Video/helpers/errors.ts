@@ -191,6 +191,24 @@ export function toNodeError(
 }
 
 /**
+ * Appends an actionable hint to the *description* of an already-typed node
+ * error. The API's own `message` is never touched — JSON2Video writes it to be
+ * client-actionable and the catalogue mandates surfacing it verbatim — so the
+ * hint only ever adds "and here is what to do next".
+ */
+export function appendErrorHint<T>(error: T, hint: string | undefined): T {
+	if (hint === undefined || hint === '') return error;
+	if (!(error instanceof NodeApiError) && !(error instanceof NodeOperationError)) return error;
+
+	const target = error as unknown as { description?: string | null };
+	const current = nonEmptyString(target.description);
+
+	target.description = current === undefined ? hint : `${current} ${hint}`;
+
+	return error;
+}
+
+/**
  * Stores the project ID on an error so `continueOnFail` output, and the n8n
  * error panel, keep the reference to a render that was already paid for.
  */

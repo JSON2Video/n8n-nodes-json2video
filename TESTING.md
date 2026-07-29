@@ -278,3 +278,149 @@ Update, Duplicate and Delete — a `render`-only key must fail those four with
 10. **Movie → Create still works.** Confirm the Movie resource's Template
     resourceLocator (unchanged by this phase) still lists templates and
     renders successfully — Phase 5 must not regress Phase 4.
+
+---
+
+## Phase 6 — Media resource
+
+Operations implemented: **Upload File**, **Get File**, **List Folder**,
+**Get Folder Tree**, **Move File**, **Delete File**, **Create Folder**,
+**Delete Folder**, **Get Storage Usage**. Contract:
+`integrations/shared/operations.md` → "Resource: Media" + Appendix B (B12) +
+Appendix C.
+
+### Automated checks (done, no API key needed)
+
+```bash
+cd integrations/n8n
+npm run lint    # clean
+npm run build   # clean
+npm test        # 130 tests, 6 files
+```
+
+What `test/media.test.ts` locks down:
+
+| Area | Covers |
+|---|---|
+| `normalizeMediaPath` / `toListFolderPath` / `joinMediaPath` | Leading, trailing and repeated slashes stripped; every spelling of the root folder (`''`, `'/'`, `undefined`) collapsed to the empty string; `GET /media/folder` alone gets `/` back |
+| `sanitizeMediaFileName` | Characters outside `a-z A-Z 0-9 . _ -` become `_`, so the emitted `path`/`url` match what the API really stored |
+| `resolveUploadFileName` / `resolveUploadContentType` | Override wins over the binary's own values; missing name → `undefined` (the operation must fail, `name` is required); missing MIME type → `application/octet-stream` |
+| `buildUploadBody` | Step 1 body shape; `folder` omitted at the root |
+| `validateUploadSize` | Empty binary rejected; the 500 MB (524288000 bytes) ceiling checked client-side, before the round trip |
+| `extractPresignedUpload` | `uploadUrl`/`fileUrl` read, `expiresIn` defaulted to the documented 120 s, missing `uploadUrl` → step 2 never attempted |
+| `buildUploadOutput` | Emits `url` + `path`, and **never** `uploadUrl` (a signed secret that must not reach execution logs) |
+| `describeUploadRegistrationError` (step 1) | 409 → "use Delete File / a different name", 413 → the 500 MB ceiling, 403 split between blocked storage and an insufficient role, and nothing added when the API message already stands alone |
+| `describeUploadTransferError` (step 2) | 403 → the 120-second presigned-URL expiry, other codes named, readable without a status code |
+| `buildMoveFileBody` | `destination` is **always** sent, empty string included — omitting it makes the API answer `destination is required` |
+| `buildMoveFileOutput` / `buildDeleteFileOutput` / `buildDeleteFolderOutput` | The node echoes what the bare `{ success, timestamp }` responses omit |
+| `buildCreateFolderOutput` | The idempotent `message: "Folder already exists"` passed through and turned into a `created` flag |
+| `describeDeleteFolderError` | The empty-folder rule, the undeletable root and `temp` folders, and the role failure |
+| `buildListFolderQuery` | Root sent as `/`, zero-based `page` + `page_size`, `type`/`q` added only when set |
+| `extractListFolderMeta` / `buildListFolderItems` | One item per file with the sub-folder names attached to the first; an empty folder still emits one informational item instead of nothing; inputs never mutated |
+| `buildFolderOptions` / `buildFileOptions` | Appendix C dropdowns: folder labels with file counts and an empty value for the root; file values as a full `path` (Get File) or a bare `name` (Move / Delete File) |
+| `appendErrorHint` | Hints land on the error *description*, never on the API's `message`; existing descriptions are appended to, not replaced; plain `Error`s are left alone |
+
+`test/movie.test.ts`, `movieRequestBody.test.ts`, `polling.test.ts`,
+`errors.test.ts` and `template.test.ts` are unchanged and still green
+(Phase 4 + 5 regression guard).
+
+### Live checks pending — run these the moment the API key arrives
+
+Still **not performed**: there is no JSON2Video API key in this environment
+(Phase 0 reserves one). Start the sandbox with `npm run dev` and add the
+**JSON2Video API** credential (role `render` is enough for every Media
+operation). Item 1 is the Phase 6 acceptance criterion in
+`integrations/plans/n8n.md`.
+
+1. **Upload a real binary from a previous node and see it in the dashboard
+   Drive.** Build `HTTP Request` (GET a small MP4 or PNG, *Response Format*
+   **File**) → **JSON2Video → Media → Upload File**, *Input Binary Field*
+   `data`. Execute and expect one item
+   `{ success, name, folder, path, contentType, size, url }` — and **no
+   `uploadUrl`** anywhere in the output or in the execution log. Open
+   <https://json2video.com/dashboard> → Drive and confirm the file is there
+   with the right size and preview. Paste the emitted `url` into a
+   Movie → Create element `src` and render, to prove the URL is usable
+   downstream. Repeat with *Additional Options → Folder* set to a real folder,
+   then with *File Name* set to something containing spaces and accents (e.g.
+   `mi vídeo (final).mp4`) and confirm the stored name is `mi_v_deo__final_.mp4`
+   and that the emitted `path` matches it — this is the client-side
+   sanitisation agreeing with the server.
+2. **Upload failure paths.**
+   - *No file name*: feed binary data with no `fileName` (e.g. from a Code
+     node) and leave *File Name* empty. Expect a client-side failure "The file
+     to upload has no name" with **no** request made.
+   - *Duplicate*: upload the same file twice into the same folder. The second
+     run must show the API's 409 message verbatim plus the appended hint
+     pointing at Media → Delete File.
+   - *Oversized*: a file over 500 MB must fail client-side ("…over the
+     JSON2Video limit of 500 MB…") before any request.
+   - *Step 2*: hard to force deliberately; if it ever happens, the error must
+     read "Storage rejected the upload of …: the presigned upload URL expired…"
+     with the pending-state description — **not** raw S3 XML. Check afterwards
+     with Get File that the record is `status: "pending"`, delete it, and
+     confirm the re-upload then succeeds.
+   - Watch the network/console: the `PUT` to the presigned URL must **not**
+     carry `x-api-key` (it would break the S3 signature), and its
+     `Content-Type` must equal the `contentType` sent in step 1.
+3. **Get File.** Pick the folder in *Folder*, then the file in *File* — confirm
+   the file dropdown repopulates when the folder changes
+   (`loadOptionsDependsOn`). Expect `name`, `folder`, `type`, `contentType`,
+   `size` (bytes), `url`, `status: "uploaded"`, `temporary`, `created_at`.
+   Toggle *Simplify* off and confirm the raw `{ success, file, … }` envelope.
+   Try a path that does not exist and confirm the API's `File not found`.
+4. **List Folder.** Root first (leave *Folder* empty): expect one item per
+   file, with `folders` (the sub-folder names) on the **first** item only. On
+   an empty folder, confirm a single informational item comes back
+   (`{ path, folders, files: [], total, total_files, total_size }`) rather than
+   nothing. Set *Limit* 2 on a folder with more files and confirm exactly 2
+   items; then *Return All* on and confirm every file appears (server-side
+   paging, 100 per request). Set *Additional Options → File Type* to **Video**
+   and *Search* to a substring and confirm both filters apply, and that
+   `total` reflects the filtered count while `total_files` counts the folder.
+5. **Get Folder Tree.** Expect one item per folder with `path`, `files`,
+   `size` — including `/` for the root and `temp`. Cross-check the numbers
+   against Get Storage Usage.
+6. **Create Folder.** Create `n8n-test/nested` in one call and confirm both
+   levels appear in Get Folder Tree. Run it a second time and confirm it
+   succeeds with `created: false` and `message: "Folder already exists"`
+   (idempotent). Try a name full of invalid characters and confirm the API's
+   `Invalid folder name`.
+7. **Move File.** Move the uploaded file from its folder into `n8n-test`,
+   using the *Source Folder* / *File* / *Destination Folder* dropdowns. Expect
+   `{ success, name, folder: "n8n-test", path: "n8n-test/<name>", moved: true }`
+   and confirm with Get File. Then move it to the **root** by leaving
+   *Destination Folder* empty — this is the case that breaks if `destination`
+   is omitted instead of sent as `""`; the API must not answer
+   `destination is required`. Move it into `temp` and confirm Get File now
+   reports `temporary: true` and that Get Storage Usage `used_bytes` drops.
+   Finally, provoke a 409 by moving a file into a folder that already has a
+   file of that name.
+8. **Delete Folder.** Try deleting `n8n-test` while it still holds the file:
+   expect the API's `Folder is not empty. Delete all files first.` **plus** the
+   appended hint about deleting the files first. Delete the file, retry, and
+   expect `{ success: true, folder, deleted: true }`. Then try deleting the
+   root (leave the field empty → client-side "No folder selected") and `temp`
+   (expect `Cannot delete the temp folder` with its hint).
+9. **Delete File.** Delete the uploaded file with the *Folder* + *File*
+   dropdowns. Expect `{ success, name, folder, path, deleted: true }` — the raw
+   API response has none of those fields, so confirm the node is adding them.
+   Confirm the file is gone from the dashboard Drive and that Get Storage Usage
+   `used_bytes` decreased. Delete it again and confirm the API's `File not
+   found`.
+10. **Get Storage Usage.** Expect `used_bytes`, `free_allowance` (52428800 =
+    50 MB), `credits_per_week`, `blocked: false`, `blocked_at: null`. Toggle
+    *Simplify* off for the `{ success, storage, … }` envelope.
+11. **Dropdown degradation (Appendix C).** With a deliberately wrong API key,
+    open the Folder and File dropdowns: they must render **empty** and must not
+    break the parameter panel or throw. Confirm every one of them can still be
+    switched to an expression and driven from a previous node's data — that is
+    the escape hatch for folders that do not exist yet.
+12. **Continue On Fail.** Enable it on a Delete File pointed at a missing file
+    and confirm the output item is `{ error: "File not found" }` instead of the
+    node throwing, with `pairedItem` intact.
+13. **Multiple input items.** Feed three binary items into one Upload File node
+    and confirm three uploads, three output items, and correct `pairedItem`
+    mapping (n8n's *Item Linking* view).
+14. **Phases 4 and 5 not regressed.** Re-run one Movie → Render and Wait and
+    one Template → Get Many in the same workflow.

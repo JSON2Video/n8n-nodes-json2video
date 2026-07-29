@@ -7,11 +7,24 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
+import { executeMediaOperation } from './actions/media';
 import { executeMovieOperation } from './actions/movie';
 import { executeTemplateOperation } from './actions/template';
-import { movieFields, movieOperations, templateFields, templateOperations } from './descriptions';
+import {
+	mediaFields,
+	mediaOperations,
+	movieFields,
+	movieOperations,
+	templateFields,
+	templateOperations,
+} from './descriptions';
 import { getAttachedProjectId, toNodeError } from './helpers/errors';
-import { getTemplateTags } from './methods/loadOptions';
+import {
+	getMediaFileNames,
+	getMediaFiles,
+	getMediaFolders,
+	getTemplateTags,
+} from './methods/loadOptions';
 import { searchLibraryTemplates, searchTemplates } from './methods/listSearch';
 
 // This node uses the programmatic style (an `execute` method) because the
@@ -54,6 +67,10 @@ export class Json2Video implements INodeType {
 				noDataExpression: true,
 				options: [
 					{
+						name: 'Media',
+						value: 'media',
+					},
+					{
 						name: 'Movie',
 						value: 'movie',
 					},
@@ -68,6 +85,8 @@ export class Json2Video implements INodeType {
 			...movieFields,
 			...templateOperations,
 			...templateFields,
+			...mediaOperations,
+			...mediaFields,
 		],
 	};
 
@@ -77,6 +96,9 @@ export class Json2Video implements INodeType {
 			searchTemplates,
 		},
 		loadOptions: {
+			getMediaFileNames,
+			getMediaFiles,
+			getMediaFolders,
 			getTemplateTags,
 		},
 	};
@@ -95,6 +117,8 @@ export class Json2Video implements INodeType {
 					results = await executeMovieOperation.call(this, operation, itemIndex);
 				} else if (resource === 'template') {
 					results = await executeTemplateOperation.call(this, operation, itemIndex);
+				} else if (resource === 'media') {
+					results = await executeMediaOperation.call(this, operation, itemIndex);
 				} else {
 					throw new NodeOperationError(
 						this.getNode(),
