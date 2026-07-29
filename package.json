@@ -1,0 +1,59 @@
+{
+    "name": "n8n-nodes-json2video",
+    "version": "0.0.1",
+    "description": "Official JSON2Video node for n8n. Create and render videos from JSON or templates via the JSON2Video API.",
+    "license": "MIT",
+    "homepage": "https://json2video.com",
+    "keywords": [
+        "n8n-community-node-package",
+        "json2video",
+        "video",
+        "video-generation",
+        "video-automation",
+        "text-to-video",
+        "n8n"
+    ],
+    "author": {
+        "name": "JSON2Video",
+        "email": "joaquim.cardona@json2video.com"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/JSON2Video/n8n-nodes-json2video.git"
+    },
+   "scripts": {
+		"build": "n8n-node build",
+		"build:watch": "tsc --watch",
+		"dev": "n8n-node dev",
+		"lint": "n8n-node lint",
+		"lint:fix": "n8n-node lint --fix",
+		"release": "n8n-node release",
+		"prepublishOnly": "n8n-node prerelease"
+	},
+    "files": [
+        "dist"
+    ],
+    "engines": {
+        "node": ">=20.15"
+    },
+    "n8n": {
+        "n8nNodesApiVersion": 1,
+        "strict": true,
+        "credentials": [
+            "dist/credentials/Json2VideoApi.credentials.js"
+        ],
+        "nodes": [
+            "dist/nodes/Json2Video/Json2Video.node.js"
+        ]
+    },
+    "devDependencies": {
+        "@n8n/node-cli": "*",
+        "eslint": "9.32.0",
+        "prettier": "3.6.2",
+        "release-it": "^19.0.4",
+        "typescript": "5.9.2"
+    },
+    "peerDependencies": {
+        "n8n-workflow": "*"
+    }
+}
