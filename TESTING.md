@@ -1,10 +1,15 @@
 # Testing
 
-Manual verification notes for this package, kept alongside the code so each
-phase of the build plan (`integrations/plans/n8n.md`) can record how it was
-checked. Automated tests will be added once there is enough surface area to
-warrant them (Phase 4+); until then, verification is manual, in n8n's own dev
-sandbox.
+Verification notes for this package, kept alongside the code so each phase of
+the build plan (`integrations/plans/n8n.md`) can record how it was checked.
+
+Two layers:
+
+- **Automated unit tests** (`test/`, Vitest) cover the pure logic that has no
+  business being verified by hand: payload building, JSON validation, the
+  polling backoff and API error extraction. Run them with `npm test`.
+- **Manual checks** in n8n's own dev sandbox (`npm run dev`) cover everything
+  that needs a real API key and a real render.
 
 ## Phase 3 — Credentials (`Json2VideoApi`)
 
@@ -65,3 +70,101 @@ above can be (and were) reasoned through / dry-run against the code, but step
 against the real API **still need a human with a real JSON2Video API key** to
 run `npm run dev` and click through the credential UI. Do this before
 considering Phase 3 fully closed.
+
+---
+
+## Phase 4 — Movie resource
+
+Operations implemented: **Create**, **Get Status**, **Get Many**,
+**Render and Wait**, **Delete**. Contract:
+`integrations/shared/operations.md` → "Resource: Movie".
+
+### Automated checks (done, no API key needed)
+
+```bash
+cd integrations/n8n
+npm run lint    # clean
+npm run build   # clean
+npm test        # 49 tests, 4 files
+```
+
+What the unit tests lock down (`test/`):
+
+| File | Covers |
+|---|---|
+| `movie.test.ts` | Movie JSON client-side validation (parse position surfaced, empty/non-object rejected), the flat **Webhook URL → `exports[].destinations[]`** expansion (Appendix B / B3, including the full `application/json` MIME string), Additional Options → API property mapping, Width/Height only for `resolution=custom`, `exports` winning over Webhook URL, 16-character project ID validation, response simplification |
+| `polling.test.ts` | The backoff tiers **5 / 8 / 11 / 17 / 25 / 30** for a 5 s interval, the 5 s hard floor, the 5–300 s and 30–3600 s clamps |
+| `errors.test.ts` | Error extraction from B7-shaped bodies (`{ message }` / `{ message, code }` with **no `success` field**), `body.error` and status-text fallbacks, the invalid-API-key 400 → actionable message mapping (B11), status-code discovery, project ID round-trip on errors |
+| `movieRequestBody.test.ts` | End-to-end parameter → request body for both input modes, including variables as fields vs JSON, and the "no template selected" guard |
+
+### Live checks pending — run these the moment the API key arrives
+
+Still **not performed**: there is no JSON2Video API key in this environment
+(Phase 0 reserves one). Start the sandbox with `npm run dev`, add the
+**JSON2Video API** credential, then work through the list. All four are
+acceptance criteria of Phase 4 in `integrations/plans/n8n.md`.
+
+1. **Template render end-to-end via Render and Wait.**
+   Movie → *Render and Wait*, Input Mode *Template*. Check first that the
+   **Template** resource locator's *From List* mode actually lists the
+   account's templates (it calls `GET /v2/templates`; an empty list means the
+   key's role is below `render`, or the list search silently failed — the
+   *By ID* mode must keep working either way). Pick a template, fill its
+   variables, execute. Expect: the node blocks for the length of the render,
+   then emits one item with `status: "done"`, a playable `url`, `duration`
+   (seconds), `size` (bytes), `width`/`height` (pixels) and `remaining_quota`.
+   While it waits, confirm in the n8n/API logs that the first status check
+   happens ~5 s after the POST and that the interval widens on long renders
+   (5 → 8 → 11 …), never faster than 5 s.
+2. **Raw-JSON render.** Same operation, Input Mode *Movie JSON*, leaving the
+   pre-filled example document. Expect a rendered video with the text
+   "Hello from n8n". Then repeat with Movie → *Create* and confirm it returns
+   immediately with `{ success, project, timestamp }` and nothing else.
+3. **A deliberately broken movie surfaces the API's message.** Two sub-cases,
+   they exercise different code paths:
+   - *Client-side*: type `{"scenes": [}` into Movie JSON. Expect the node to
+     fail **without making a request**, with `Movie JSON is not valid JSON: …`
+     naming the parse position.
+   - *Server-side*: send valid JSON the renderer rejects, e.g.
+     `{"scenes":[{"elements":[{"type":"video"}]}]}` (a `video` element with no
+     `src`). Expect the JSON2Video message verbatim in the n8n error panel
+     ("Scene #1 Element #2: The element type 'video' requires a 'src'
+     property." or similar) — **not** a generic "400 - Bad Request".
+   - Also confirm the render-failure path: with Render and Wait, a movie that
+     starts and then fails must produce an error whose description reads
+     `Render failed for project <16-char id>: <API message>`, and whose
+     project ID is present. Then flip *Wait Options → Fail On Render Error*
+     off and confirm the same movie is emitted as a normal item with
+     `status: "error"` instead of throwing.
+4. **Delete.** Movie → *Delete* with the project ID from step 1. Expect
+   `{ success: true, project, deleted_at }`, the video URL to stop resolving,
+   and the movie to still appear in *Get Many* with `deleted_at` set and
+   `url: null`. Delete it a second time and confirm it still succeeds (the
+   operation is idempotent).
+
+Additional live checks worth doing in the same session:
+
+5. **Get Status** with a real project ID, *Simplify* on (default) → the movie
+   object plus `remaining_quota`; *Simplify* off → the raw envelope. Turn
+   *Include Movie JSON* on and confirm the `json` field appears (it is
+   suppressed by `format=simple` by default).
+6. **Get Status with a bad ID**: 15 characters must fail client-side with
+   `Project ID must be a 16-character string…`; a well-formed but unknown
+   16-character ID returns HTTP 200 with `status: "error"` — confirm the node
+   does not mistake it for a success.
+7. **Get Many** with *Return All* off (limit 5) and on, plus a Start/End Date
+   range. Expect one n8n item per movie.
+8. **Webhook URL option**: set it to a Webhook Trigger URL in another
+   workflow, run Movie → *Create*, and confirm the callback arrives — this is
+   what the flat field's expansion into `exports[].destinations[]` is for.
+9. **Continue On Fail**: enable it on a node configured to fail (e.g. bad
+   project ID) and confirm the output item is `{ error: "…" }`, and that after
+   a Render and Wait timeout the item also carries `project`.
+10. **Timeout path**: set *Wait Options → Timeout* to 30 s on a movie that
+    takes longer. Expect a failure quoting the project ID and pointing at
+    Get Status — and confirm the render still completes on the JSON2Video
+    side afterwards.
+11. **Never retry the POST**: with n8n's "Retry On Fail" enabled on a Create
+    node, confirm nothing in this node retries the submission itself (each
+    retry is a new paid render — that is n8n's own behaviour and the reason
+    the README must warn about it).

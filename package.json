@@ -21,15 +21,17 @@
         "type": "git",
         "url": "https://github.com/JSON2Video/n8n-nodes-json2video.git"
     },
-   "scripts": {
-		"build": "n8n-node build",
-		"build:watch": "tsc --watch",
-		"dev": "n8n-node dev",
-		"lint": "n8n-node lint",
-		"lint:fix": "n8n-node lint --fix",
-		"release": "n8n-node release",
-		"prepublishOnly": "n8n-node prerelease"
-	},
+    "scripts": {
+        "build": "n8n-node build",
+        "build:watch": "tsc --watch",
+        "dev": "n8n-node dev",
+        "lint": "n8n-node lint",
+        "lint:fix": "n8n-node lint --fix",
+        "release": "n8n-node release",
+        "prepublishOnly": "n8n-node prerelease",
+        "test": "vitest run",
+        "test:watch": "vitest"
+    },
     "files": [
         "dist"
     ],
@@ -51,7 +53,8 @@
         "eslint": "9.32.0",
         "prettier": "3.6.2",
         "release-it": "^19.0.4",
-        "typescript": "5.9.2"
+        "typescript": "5.9.2",
+        "vitest": "^4.1.10"
     },
     "peerDependencies": {
         "n8n-workflow": "*"

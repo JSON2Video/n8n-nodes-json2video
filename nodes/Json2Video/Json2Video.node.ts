@@ -1,12 +1,28 @@
-import type { IExecuteFunctions, INodeExecutionData, INodeType, INodeTypeDescription } from 'n8n-workflow';
-import { NodeConnectionTypes } from 'n8n-workflow';
+import type {
+	IDataObject,
+	IExecuteFunctions,
+	INodeExecutionData,
+	INodeType,
+	INodeTypeDescription,
+} from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
-// Placeholder description. Resources, operations and fields are added in
-// Phases 4-6 (Movie, Template, Media) per `integrations/shared/operations.md`.
+import { executeMovieOperation } from './actions/movie';
+import { movieFields, movieOperations } from './descriptions';
+import { getAttachedProjectId, toNodeError } from './helpers/errors';
+import { searchTemplates } from './methods/listSearch';
+
 // This node uses the programmatic style (an `execute` method) because the
-// "Render & Wait" operation needs to create a movie and then poll the API
-// until it reaches a terminal status, which does not fit the declarative
-// request/response mapping style.
+// "Render and Wait" operation creates a movie and then polls the API until the
+// render reaches a terminal status, with backoff and retry rules that the
+// declarative request/response mapping cannot express.
+//
+// Layout, so Template (Phase 5) and Media (Phase 6) slot in without churn:
+//   descriptions/  UI parameter definitions, one file per resource
+//   actions/       one folder per resource, one file per operation
+//   transport/     the shared authenticated request helper
+//   helpers/       pure, unit-testable logic (error extraction, polling, payloads)
+//   methods/       loadOptions / listSearch handlers
 export class Json2Video implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'JSON2Video',
@@ -29,13 +45,65 @@ export class Json2Video implements INodeType {
 			},
 		],
 		properties: [
-			// Resource / Operation properties are added in Phases 4-6.
+			{
+				displayName: 'Resource',
+				name: 'resource',
+				type: 'options',
+				noDataExpression: true,
+				options: [
+					{
+						name: 'Movie',
+						value: 'movie',
+					},
+				],
+				default: 'movie',
+			},
+			...movieOperations,
+			...movieFields,
 		],
+	};
+
+	methods = {
+		listSearch: {
+			searchTemplates,
+		},
 	};
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		// Implementation added in Phases 4-6 (Movie, Template, Media resources).
-		return [items];
+		const returnData: INodeExecutionData[] = [];
+
+		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+			try {
+				const resource = this.getNodeParameter('resource', itemIndex) as string;
+				const operation = this.getNodeParameter('operation', itemIndex) as string;
+
+				if (resource !== 'movie') {
+					throw new NodeOperationError(
+						this.getNode(),
+						`The resource "${resource}" is not supported`,
+						{ itemIndex },
+					);
+				}
+
+				const results = await executeMovieOperation.call(this, operation, itemIndex);
+				returnData.push(...results);
+			} catch (error) {
+				if (this.continueOnFail()) {
+					const json: IDataObject = { error: (error as Error).message };
+
+					// Keep the project ID reachable: the render was already paid for.
+					const project = getAttachedProjectId(error);
+					if (project !== undefined) json.project = project;
+
+					returnData.push({ json, pairedItem: { item: itemIndex } });
+					continue;
+				}
+
+				throw toNodeError(this.getNode(), error, itemIndex);
+			}
+		}
+
+		return [returnData];
 	}
 }
