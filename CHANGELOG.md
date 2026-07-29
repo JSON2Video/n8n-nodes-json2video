@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-29
+
+Pipeline-validation release: the first version published via GitHub Actions
+with npm provenance (trusted publisher, OIDC, no npm token). `0.0.1` was a
+manual placeholder publish (`--ignore-scripts`) used only to reserve the
+package name and was never a real release. `1.0.0` is reserved for after a
+live end-to-end pass against the JSON2Video API.
+
 First public release of the official JSON2Video node for n8n.
 
 ### Added
