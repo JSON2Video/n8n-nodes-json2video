@@ -4,6 +4,29 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Template → Get Variables** — lists the variables a template declares (its
+  `{{placeholder}}` inputs), one output item per variable, as currently saved.
+  Each item carries `name`, `label`, `type`, `default` (when the template set
+  one, coerced to a real number/boolean the same way the Variables mapper
+  pre-fills its widgets — not left as the string `format=make` sends), `help`
+  (when set), `required` (when `true` — rare, 2 of 628 sampled), `options` for
+  `select` variables and `spec` for `array`/`collection` variables, one level
+  deep. `make_webhook_url` and `client_data` — Make.com platform artifacts the
+  API injects into every template — are filtered out by exact name, same as
+  the Variables mapper.
+
+  This is what lets a workflow, or an AI Agent using this node as a tool,
+  discover a template's inputs at runtime instead of having them hard-coded
+  (`integrations/shared/operations.md`, Appendix D / D10). It reuses the exact
+  same internal `format=make` fetch and type mapping the Variables
+  `resourceMapper` already depends on — no new API dependency, no duplicated
+  logic. There is no `Simplify` toggle: the operation always emits one item
+  per variable, the same call already made for Get Many and Get Library.
+
 ## [0.4.0] - 2026-07-30
 
 ### Changed

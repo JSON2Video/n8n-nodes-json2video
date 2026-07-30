@@ -309,6 +309,114 @@ export function buildTemplateVariableFields(variables: unknown): ResourceMapperF
 }
 
 /**
+ * One row of `Template → Get Variables` output — the same `format=make`
+ * descriptor the Variables `resourceMapper` consumes, trimmed to what a
+ * workflow or an AI Agent needs to discover a template's inputs at runtime
+ * (Appendix D / D10). `type` is the API's own string (`text`, `number`,
+ * `select`, `boolean`, `array`, `collection`, or any future value it starts
+ * emitting) — never the n8n `FieldType` the resourceMapper widget renders it
+ * as, which would be a second, n8n-specific vocabulary for the same thing.
+ */
+export interface TemplateVariableDescriptor {
+	name: string;
+	label: string;
+	type: string;
+	default?: string | number | boolean;
+	help?: string;
+	required?: boolean;
+	options?: INodePropertyOptions[];
+	spec?: TemplateVariableDescriptor[];
+}
+
+/**
+ * Maps one `format=make` variable descriptor — or one entry of another
+ * descriptor's `spec` array, which is the same shape one level down — onto the
+ * `Template → Get Variables` output shape.
+ *
+ * Reuses the exact same mapping the Variables `resourceMapper` uses
+ * (`templateVariableFieldType`, `coerceVariableDefault`,
+ * `buildVariableSelectOptions`) so the two surfaces never disagree about a
+ * variable's default value or its allowed choices: a `number` variable's
+ * `default` comes back as a JSON number here, not the string `format=make`
+ * sends, exactly like the mapper pre-fills its numeric box.
+ *
+ * `help` and `required` are included only when the template actually set them
+ * — `help` because most variables do not have any (56 of 628 sampled), and
+ * `required` because it is genuinely rare (2 of 628): omitting a boolean that
+ * is almost always the same value keeps every output item readable instead of
+ * padding it with `"required": false` on every row.
+ *
+ * An empty or missing `type` becomes `"text"`, matching the plain text box the
+ * resourceMapper falls back to for the same input — not left blank, which
+ * would say nothing.
+ */
+export function buildTemplateVariableDescriptor(
+	variable: IDataObject,
+): TemplateVariableDescriptor | undefined {
+	const name = readString(variable.name);
+	if (name === '') return undefined;
+
+	const rawType = readString(variable.type);
+	const type = rawType === '' ? 'text' : rawType;
+	const label = readString(variable.label);
+
+	const descriptor: TemplateVariableDescriptor = {
+		name,
+		label: label === '' ? name : label,
+		type,
+	};
+
+	const help = readString(variable.help);
+	if (help !== '') descriptor.help = help;
+
+	if (variable.required === true) descriptor.required = true;
+
+	if (type === 'select') {
+		const options = buildVariableSelectOptions(variable.options);
+		if (options.length > 0) descriptor.options = options;
+	}
+
+	if (type === 'array' || type === 'collection') {
+		const spec = readObjects(variable.spec)
+			.map((entry) => buildTemplateVariableDescriptor(entry))
+			.filter((entry): entry is TemplateVariableDescriptor => entry !== undefined);
+		if (spec.length > 0) descriptor.spec = spec;
+	}
+
+	// `templateVariableFieldType` (not the possibly-defaulted `type` above) picks
+	// the coercion rule, so a variable with no declared type still gets the same
+	// text-box treatment `coerceVariableDefault` gives the resourceMapper's
+	// fallback string field.
+	const defaultValue = coerceVariableDefault(variable.default, templateVariableFieldType(variable.type));
+	if (defaultValue !== undefined) descriptor.default = defaultValue;
+
+	return descriptor;
+}
+
+/**
+ * The full `Template → Get Variables` output: one descriptor per variable the
+ * template currently declares, in the template's own order.
+ *
+ * `make_webhook_url` and `client_data` are filtered out by exact name — the
+ * same Make.com platform artifacts `buildTemplateVariableFields` drops
+ * (`PLATFORM_INJECTED_VARIABLES`) — so Get Variables and the Variables
+ * resourceMapper always agree on what counts as "a variable of this template".
+ */
+export function buildTemplateVariableList(variables: unknown): TemplateVariableDescriptor[] {
+	const result: TemplateVariableDescriptor[] = [];
+
+	for (const variable of readObjects(variables)) {
+		const name = readString(variable.name);
+		if (name === '' || PLATFORM_INJECTED_VARIABLES.includes(name)) continue;
+
+		const descriptor = buildTemplateVariableDescriptor(variable);
+		if (descriptor !== undefined) result.push(descriptor);
+	}
+
+	return result;
+}
+
+/**
  * Turns the runtime value of the Variables `resourceMapper` parameter into the
  * plain `variables` object `POST /movies` expects. The wire format is unchanged
  * from 0.3.0 — only the UI that produces it is different.

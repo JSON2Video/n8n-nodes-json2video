@@ -4,7 +4,9 @@ import {
 	applyClientSideLimit,
 	buildDeleteTemplateResponse,
 	buildTemplateBody,
+	buildTemplateVariableDescriptor,
 	buildTemplateVariableFields,
+	buildTemplateVariableList,
 	buildVariableSelectOptions,
 	coerceVariableDefault,
 	collectSortedTags,
@@ -503,6 +505,197 @@ describe('buildTemplateVariableFields', () => {
 		expect(buildTemplateVariableFields(undefined)).toEqual([]);
 		expect(buildTemplateVariableFields('nope')).toEqual([]);
 		expect(buildTemplateVariableFields([{ label: 'No name at all', type: 'text' }])).toEqual([]);
+	});
+});
+
+// Template: Get Variables output shape (Appendix D / D10). Reuses the same
+// `format=make` mapping the Variables resourceMapper uses
+// (`templateVariableFieldType`, `coerceVariableDefault`,
+// `buildVariableSelectOptions`), so these tests focus on what is different
+// about the flat, discovery-oriented shape rather than re-testing the shared
+// helpers (already covered above).
+describe('buildTemplateVariableDescriptor', () => {
+	it('maps the minimum shape: name, label, type', () => {
+		expect(
+			buildTemplateVariableDescriptor({ name: 'quote', label: 'Quote', type: 'text' }),
+		).toEqual({ name: 'quote', label: 'Quote', type: 'text' });
+	});
+
+	it('falls back to the raw name when there is no label', () => {
+		expect(buildTemplateVariableDescriptor({ name: 'headline', type: 'text' })).toEqual({
+			name: 'headline',
+			label: 'headline',
+			type: 'text',
+		});
+	});
+
+	it('defaults a missing type to "text", matching the resourceMapper\'s text-box fallback', () => {
+		expect(buildTemplateVariableDescriptor({ name: 'mystery', label: 'Mystery' })).toEqual({
+			name: 'mystery',
+			label: 'Mystery',
+			type: 'text',
+		});
+	});
+
+	it('keeps an unrecognised type verbatim rather than rewriting it', () => {
+		// `url` is real (observed live) and is not in the resourceMapper's type table.
+		expect(
+			buildTemplateVariableDescriptor({ name: 'video_URL', label: 'Video URL', type: 'url' }),
+		).toEqual({ name: 'video_URL', label: 'Video URL', type: 'url' });
+	});
+
+	it('returns undefined for a descriptor with no name', () => {
+		expect(buildTemplateVariableDescriptor({ label: 'No name at all', type: 'text' })).toBeUndefined();
+	});
+
+	it('includes help only when the template set it', () => {
+		expect(
+			buildTemplateVariableDescriptor({
+				name: 'scenes',
+				label: 'Scenes',
+				type: 'array',
+				help: 'Organize the content of your reel in scenes',
+			}),
+		).toMatchObject({ help: 'Organize the content of your reel in scenes' });
+
+		expect(buildTemplateVariableDescriptor({ name: 'quote', label: 'Quote', type: 'text' })).not.toHaveProperty(
+			'help',
+		);
+	});
+
+	it('includes required only when true, never as an explicit false', () => {
+		expect(
+			buildTemplateVariableDescriptor({ name: 'video_URL', type: 'url', required: true }),
+		).toMatchObject({ required: true });
+
+		expect(
+			buildTemplateVariableDescriptor({ name: 'audio_URL', type: 'url', required: false }),
+		).not.toHaveProperty('required');
+
+		expect(buildTemplateVariableDescriptor({ name: 'audio_URL', type: 'url' })).not.toHaveProperty(
+			'required',
+		);
+	});
+
+	it('coerces number and boolean defaults back to their real type, like the resourceMapper', () => {
+		expect(
+			buildTemplateVariableDescriptor({ name: 'titleWeight', type: 'number', default: '600' }),
+		).toMatchObject({ default: 600 });
+
+		expect(
+			buildTemplateVariableDescriptor({
+				name: 'flip_horizontally',
+				type: 'boolean',
+				default: 'false',
+			}),
+		).toMatchObject({ default: false });
+	});
+
+	it('drops the junk stringified-object default for array/collection, same as the resourceMapper', () => {
+		expect(
+			buildTemplateVariableDescriptor({
+				name: 'scenes',
+				type: 'array',
+				default: '[object Object],[object Object]',
+			}),
+		).not.toHaveProperty('default');
+	});
+
+	it('gives a select variable its rewritten { name, value } options', () => {
+		expect(
+			buildTemplateVariableDescriptor({
+				name: 'renderMode',
+				label: 'Render Mode',
+				type: 'select',
+				options: [
+					{ label: 'Test (image slideshow)', value: 'slideshow' },
+					{ label: 'Final video (avatar video)', value: 'video' },
+				],
+				default: 'video',
+			}),
+		).toEqual({
+			name: 'renderMode',
+			label: 'Render Mode',
+			type: 'select',
+			default: 'video',
+			options: [
+				{ name: 'Test (image slideshow)', value: 'slideshow' },
+				{ name: 'Final video (avatar video)', value: 'video' },
+			],
+		});
+	});
+
+	it('omits options for a select with no usable choices, but keeps the type as select', () => {
+		expect(
+			buildTemplateVariableDescriptor({ name: 'broken', type: 'select', options: [] }),
+		).toEqual({ name: 'broken', label: 'broken', type: 'select' });
+	});
+
+	it('recurses into spec for array/collection variables, one level deep', () => {
+		const descriptor = buildTemplateVariableDescriptor({
+			name: 'scenes',
+			label: 'Scenes',
+			type: 'array',
+			spec: [
+				{ name: 'layoutStyle', label: 'Layout Style', type: 'text' },
+				{ name: 'voiceoverText', label: 'Voiceover Text', type: 'text', help: 'Spoken text' },
+			],
+		});
+
+		expect(descriptor?.spec).toEqual([
+			{ name: 'layoutStyle', label: 'Layout Style', type: 'text' },
+			{ name: 'voiceoverText', label: 'Voiceover Text', type: 'text', help: 'Spoken text' },
+		]);
+	});
+
+	it('omits spec when the nested list is empty or absent', () => {
+		expect(buildTemplateVariableDescriptor({ name: 'voice1', type: 'collection' })).not.toHaveProperty(
+			'spec',
+		);
+		expect(
+			buildTemplateVariableDescriptor({ name: 'voice1', type: 'collection', spec: [] }),
+		).not.toHaveProperty('spec');
+	});
+});
+
+describe('buildTemplateVariableList', () => {
+	it('returns one descriptor per variable, in the template\'s own order', () => {
+		expect(
+			buildTemplateVariableList([
+				{ name: 'quote', label: 'Quote', type: 'text', default: 'Ship it' },
+				{ name: 'author', label: 'Author', type: 'text', default: 'John Doe' },
+			]),
+		).toEqual([
+			{ name: 'quote', label: 'Quote', type: 'text', default: 'Ship it' },
+			{ name: 'author', label: 'Author', type: 'text', default: 'John Doe' },
+		]);
+	});
+
+	it('drops the two Make.com variables the API injects into every template', () => {
+		const list = buildTemplateVariableList([
+			{ name: 'make_webhook_url', advanced: true, type: 'text', label: 'Webhook URL' },
+			{ name: 'quote', label: 'Quote', type: 'text' },
+			{ name: 'client_data', advanced: true, type: 'array', label: 'Client data', spec: [] },
+		]);
+
+		expect(list.map((variable) => variable.name)).toEqual(['quote']);
+	});
+
+	it('honours the rare required flag', () => {
+		const [video, audio] = buildTemplateVariableList([
+			{ name: 'video_URL', label: 'Video URL', type: 'url', required: true },
+			{ name: 'audio_URL', label: 'Audio URL', type: 'url' },
+		]);
+
+		expect(video.required).toBe(true);
+		expect(audio.required).toBeUndefined();
+	});
+
+	it('returns an empty list for a template with no variables or a malformed payload', () => {
+		expect(buildTemplateVariableList([])).toEqual([]);
+		expect(buildTemplateVariableList(undefined)).toEqual([]);
+		expect(buildTemplateVariableList('nope')).toEqual([]);
+		expect(buildTemplateVariableList([{ label: 'No name at all', type: 'text' }])).toEqual([]);
 	});
 });
 

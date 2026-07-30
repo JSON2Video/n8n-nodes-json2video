@@ -74,6 +74,13 @@ export const templateOperations: INodeProperties[] = [
 				action: 'Get many templates',
 			},
 			{
+				name: 'Get Variables',
+				value: 'getVariables',
+				description:
+					"List the variables a template declares — its {{placeholder}} inputs, as currently saved — one output item per variable, with its type, default and (for select and array/collection variables) its choices or sub-fields. Use this to discover a template's inputs at runtime instead of hard-coding them.",
+				action: 'Get template variables',
+			},
+			{
 				name: 'Update',
 				value: 'update',
 				description:
@@ -236,6 +243,44 @@ const getFields: INodeProperties[] = [
 					'Shape of the returned template: the stored Movie JSON, or a JSON Schema describing its variables',
 			},
 		],
+	},
+];
+
+// No `Simplify` toggle here, unlike Get: there is no raw-envelope vs.
+// simplified choice to make on this operation — the whole point is one output
+// item per variable, the same call already made for Get Many and Get Library.
+const getVariablesFields: INodeProperties[] = [
+	{
+		displayName: 'Template',
+		name: 'templateId',
+		type: 'resourceLocator',
+		default: { mode: 'list', value: '' },
+		required: true,
+		displayOptions: {
+			show: {
+				resource: ['template'],
+				operation: ['getVariables'],
+			},
+		},
+		modes: [
+			{
+				displayName: 'From List',
+				name: 'list',
+				type: 'list',
+				typeOptions: {
+					searchListMethod: 'searchTemplates',
+					searchable: true,
+				},
+			},
+			{
+				displayName: 'By ID',
+				name: 'id',
+				type: 'string',
+				placeholder: 'e.g. LerKrmBfiqaIgBuacLWn',
+			},
+		],
+		description:
+			'The template whose variables to list. The ID is the 20-character string returned when the template was created, not its name.',
 	},
 ];
 
@@ -633,6 +678,7 @@ const getLibraryFields: INodeProperties[] = [
 export const templateFields: INodeProperties[] = [
 	...getAllFields,
 	...getFields,
+	...getVariablesFields,
 	...createFields,
 	...updateFields,
 	...duplicateFields,

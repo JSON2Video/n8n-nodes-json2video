@@ -7,6 +7,7 @@ import * as duplicate from './duplicate';
 import * as get from './get';
 import * as getAll from './getAll';
 import * as getLibrary from './getLibrary';
+import * as getVariables from './getVariables';
 import * as update from './update';
 
 const operations = {
@@ -16,6 +17,7 @@ const operations = {
 	get: get.execute,
 	getAll: getAll.execute,
 	getLibrary: getLibrary.execute,
+	getVariables: getVariables.execute,
 	update: update.execute,
 } as const;
 

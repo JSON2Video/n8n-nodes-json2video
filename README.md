@@ -36,7 +36,7 @@ The key is sent as the `x-api-key` header on every request. It is stored encrypt
 
 ## Operations
 
-21 operations across three resources.
+22 operations across three resources.
 
 ### Movie
 
@@ -58,9 +58,12 @@ Both Create and Render and Wait accept either a **saved template plus variables*
 | Get | Get one template, including its stored Movie JSON or a JSON Schema of its variables |
 | Get Many | List the account's own templates, optionally filtered by tag |
 | Get Library | List the public template gallery published by JSON2Video |
+| Get Variables | List the variables a template declares, one item per variable, with its type, default and (for select and array/collection variables) its choices or sub-fields |
 | Duplicate | Copy a template — your own or one from the library — into the account |
 | Update | Change the name, Movie JSON, tags or AI prompt of a template |
 | Delete | Delete a template |
+
+**Get Variables** is what lets a workflow — or an AI Agent using this node as a tool — discover a template's `{{placeholder}}` inputs at runtime instead of having them hard-coded: pick a template and get back its variable names, types, defaults and (for `select` variables) allowed values, without opening the template editor first.
 
 ### Storage
 
@@ -168,7 +171,7 @@ If a Render and Wait times out, the node fails with the project ID in the error 
 
 This node is available as a tool for n8n's **AI Agent** node. Every operation and parameter description states its units, formats and ID semantics, so an agent can drive it without extra prompting.
 
-An agent connected to this tool can render a video from a template it picks from your library, fill the template's variables from the conversation, check on a render it started earlier, or upload a file to the Drive and use it in the next movie.
+An agent connected to this tool can render a video from a template it picks from your library, fill the template's variables from the conversation, check on a render it started earlier, or upload a file to the Drive and use it in the next movie. **Template → Get Variables** is built for this: the agent can ask the node what inputs a template accepts before rendering it, instead of relying on hard-coded knowledge of the template.
 
 Give the agent a key with the narrowest role that covers the job — **Render** is enough unless the agent is meant to modify templates.
 

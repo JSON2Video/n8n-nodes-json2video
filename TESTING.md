@@ -809,3 +809,149 @@ appears on 2 of the 628, which is why it is honoured rather than hard-coded to
   string — a value supplied by the node would be discarded. The 0.3.0 dropdown
   could show it because a dropdown option has a `description`; the mapper has no
   equivalent surface. 56 of the 628 variables carry `help`.
+
+## `emptyFieldsNotice` — confirmed against n8n's own source (2026-07-30)
+
+`getTemplateVariableFields` already returned `{ fields: [], emptyFieldsNotice: '…' }`
+for the three degraded cases (no template selected, template declares no
+variables, load failed) and the `variables` parameter already sets
+`hideNoDataError: true` — this shipped as part of 0.4.0's resourceMapper switch
+above, and the three live cases were already exercised in the "Template
+variable mapper" live pass (rows 5, 6, 7, 9). What was missing was (a) a direct
+unit test of the notice-selection logic itself, rather than only an indirect
+check via the live pass and `descriptions.test.ts`, and (b) confirming from
+n8n's own source exactly when and where the notice renders, rather than
+assuming.
+
+**Where it renders.** Fetched via `gh api repos/n8n-io/n8n/contents/...` against
+`packages/frontend/editor-ui/src/features/ndv/parameters/components/ResourceMapper/ResourceMapper.vue`
+on the `master` branch:
+
+- `fetchFields()` stores `fetchedFields.emptyFieldsNotice` into
+  `state.emptyFieldsNotice` whenever it is truthy — it is never reset to
+  empty when a later fetch has no notice, so a notice string can in principle
+  linger in local state after switching to a template that does have fields;
+  this only matters while `showMappingFields` is false again, which requires an
+  empty schema, so it does not misfire while fields are showing.
+- The template renders `<MappingFields v-if="showMappingFields" …/>`, and
+  otherwise `<N8nNotice v-else-if="state.emptyFieldsNotice && !state.hasStaleFields">`.
+- `showMappingFields` is `true` only when `mappingMode === 'defineBelow' && !loading && !loadingError && hasFields && hasAvailableMatchingColumns`.
+
+**Net effect, stated precisely rather than assumed:** the notice appears
+whenever the field list ends up empty (no template selected, no variables
+declared, or the fetch failed/threw) **and** the parameter is not mid-load or
+showing a stale-data callout instead. It also appears while **Map
+Automatically** (`autoMapInputData`) is selected if the schema is empty, since
+`showMappingFields` requires `defineBelow` regardless of field count — but it
+does **not** reappear in `autoMapInputData` mode when the template genuinely
+has fields, because `state.emptyFieldsNotice` is only ever set when a fetch's
+`emptyFieldsNotice` was truthy, and a fetch that returns fields never sets one.
+
+### Automated checks
+
+`test/resourceMapping.test.ts` drives `getTemplateVariableFields` directly
+against a fake `ILoadOptionsFunctions` (same pattern as
+`movieRequestBody.test.ts`'s fake `IExecuteFunctions`: an object stubbing
+`getNode`, `getCurrentNodeParameter` and
+`helpers.httpRequestWithAuthentication`, no real HTTP), and asserts the exact
+notice text per case:
+
+| Case | Assertion |
+|---|---|
+| No template selected (`{ mode, value: '' }` or a bare `''`) | `NO_TEMPLATE_NOTICE`, **zero** HTTP requests |
+| Template has variables | `fields` populated, `emptyFieldsNotice` `undefined` |
+| Template declares no variables (`variables: []`) | `NO_VARIABLES_NOTICE` |
+| Template's only variables are `make_webhook_url` / `client_data` | `NO_VARIABLES_NOTICE` — filtered down to nothing counts as "none" |
+| Fetch throws | `LOAD_FAILED_NOTICE`, the promise **resolves**, it does not reject |
+| Malformed response (`template` not an object) | `NO_VARIABLES_NOTICE` — treated as an empty variable list, not a crash |
+| Wording check | `LOAD_FAILED_NOTICE` contains "Using JSON", pointing at the escape hatch |
+
+The three notice constants (`NO_TEMPLATE_NOTICE`, `NO_VARIABLES_NOTICE`,
+`LOAD_FAILED_NOTICE`) are exported from `methods/resourceMapping.ts` so the
+test asserts the exact string, not a substring guess.
+
+### Live checks — DONE 2026-07-30
+
+Re-run against the same production account (102 templates) via the compiled
+`getTemplateVariableFields`:
+
+| # | Case | Result |
+|---|---|---|
+| 1 | No template selected | **PASS** — 0 fields, 0 requests, "select a template above" notice |
+| 2 | Template with variables ("Social Media - General Template", 10 fields including `select` and `array`/`collection`) | **PASS** — `emptyFieldsNotice` absent |
+| 3 | Template with no real variables ("Prova amb Arnau") | **PASS** — "declares no variables" notice |
+| 4 | Unknown template ID | **PASS** — did not throw, "could not be loaded" notice |
+| 5 | Wrong API key | **PASS** — did not throw, "could not be loaded" notice |
+
+## Template → Get Variables — 2026-07-30
+
+New operation (`operations.md` Appendix D / D10): `GET /v2/templates?id=&format=make`,
+mapped through `buildTemplateVariableList` (new, in `helpers/template.ts`) onto
+one output item per variable. Reuses `templateVariableFieldType`,
+`coerceVariableDefault`, `buildVariableSelectOptions` and
+`PLATFORM_INJECTED_VARIABLES` verbatim — the same pieces the Variables
+resourceMapper's `buildTemplateVariableFields` uses — so the two surfaces can
+never disagree about a variable's type, coerced default or select options.
+
+### Automated checks
+
+`test/template.test.ts` adds `buildTemplateVariableDescriptor` and
+`buildTemplateVariableList` coverage: the minimum shape (`name`, `label`,
+`type`), label/type fallbacks, `help`/`required` included only when set
+(never an explicit `false`), number/boolean default coercion, the
+stringified-object junk default dropped for `array`/`collection` (identical to
+the resourceMapper), `select` options rewritten and degrading gracefully to no
+`options` key when there are no usable choices (without downgrading `type`
+away from `"select"`, unlike the resourceMapper's text-box fallback — this
+operation reports what the template says, it does not need a fallback widget),
+one level of `spec` recursion, and the `make_webhook_url`/`client_data` filter.
+
+```bash
+cd integrations/n8n
+npm run lint    # clean
+npm run build   # clean
+npm test        # 241 tests, 9 files
+```
+
+### Live checks — DONE 2026-07-30
+
+Driven through the compiled `execute` handler against the same production
+account (102 templates), read-only (`GET` only, no writes/deletes/renders):
+
+| # | Case | Result |
+|---|---|---|
+| 1 | Template with a `select` variable and `array`/`collection` variables with nested `spec` ("Social Media - General Template") | **PASS** — 10 items; `renderMode` → `type: "select"` with rewritten `{ name, value }` options; `scenes` → `type: "array"` with a nested `spec` including its own `select` sub-field (`backgroundType`) |
+| 2 | Template with only text variables ("Simple quote of the day") | **PASS** — 2 items (`quote`, `author`), `make_webhook_url`/`client_data` correctly absent despite being present in the raw `format=make` response |
+| 3 | Template with a `required` variable and `url`-typed variables ("Holger merge audio-video") | **PASS** — 7 items; `video_URL` → `required: true`; every `select` variable's numeric-looking values kept as strings (`"0"`, `"-2"`, …); non-required variables carry no `required` key at all |
+| 4 | Template with no real variables ("Prova amb Arnau") | **PASS** — 0 items, no error |
+| 5 | Unknown template ID | **PASS** — throws `NodeOperationError`-wrapped `Template <id> not found`, the same message Template → Get produces |
+| 6 | Wrong API key | **PASS** — throws the node's "Invalid JSON2Video API key" message, does not leak a raw 400 |
+
+Worked example (case 1, `renderMode` and the start of `scenes`, real response
+from the account):
+
+```json
+[
+  {
+    "name": "renderMode",
+    "label": "Render Mode",
+    "type": "select",
+    "options": [
+      { "name": "Test (image slideshow)", "value": "slideshow" },
+      { "name": "Final video (avatar video)", "value": "video" }
+    ],
+    "default": "video"
+  },
+  {
+    "name": "scenes",
+    "label": "Scenes",
+    "type": "array",
+    "spec": [
+      { "name": "layoutStyle", "label": "Layout Style", "type": "text", "default": "layoutAvatar" },
+      { "name": "backgroundType", "label": "Background Type", "type": "select",
+        "options": [ { "name": "video", "value": "video" }, { "name": "image", "value": "image" } ],
+        "default": "video" }
+    ]
+  }
+]
+```

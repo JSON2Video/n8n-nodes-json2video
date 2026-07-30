@@ -10,13 +10,13 @@ import { json2VideoApiRequest } from '../transport';
  * warning — telling the user *which* of the three cases they are in is the
  * whole point.
  */
-const NO_TEMPLATE_NOTICE =
+export const NO_TEMPLATE_NOTICE =
 	'Select a template above and its variables appear here, one input per variable.';
 
-const NO_VARIABLES_NOTICE =
+export const NO_VARIABLES_NOTICE =
 	'This template declares no variables, so there is nothing to fill in — render it as it is. Add {{placeholders}} to the template to get inputs here.';
 
-const LOAD_FAILED_NOTICE =
+export const LOAD_FAILED_NOTICE =
 	'The template variables could not be loaded. Check that the template still exists and that the API key is valid, then refresh the variable list. You can also switch Specify Variables to Using JSON and set the values by hand.';
 
 /**

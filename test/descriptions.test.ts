@@ -164,8 +164,8 @@ describe('resource and operation parameters', () => {
 		}
 	});
 
-	it('exposes 21 operations across the three resources', () => {
-		expect(operationOptions).toHaveLength(21);
+	it('exposes 22 operations across the three resources', () => {
+		expect(operationOptions).toHaveLength(22);
 	});
 
 	it('gives every operation an action and a description', () => {
