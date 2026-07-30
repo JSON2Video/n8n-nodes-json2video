@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-json2video",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Official JSON2Video node for n8n. Create and render videos from JSON or templates via the JSON2Video API.",
   "license": "MIT",
   "homepage": "https://json2video.com",
