@@ -1,5 +1,6 @@
 import type { IDataObject, IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
 
+import { stripMovieJson } from '../../helpers/movie';
 import { json2VideoApiRequest } from '../../transport';
 
 /** Server-side page size ceiling of `GET /v2/movies`. */
@@ -17,6 +18,13 @@ function toIsoDate(value: unknown): string | undefined {
  * Movie: Get Many — `GET /v2/movies`.
  *
  * Emits one item per movie. Pagination is server-side through `next_token`.
+ *
+ * `format=simple` is still sent, but the list endpoint ignores it and always
+ * returns each movie's submitted Movie JSON in `json` (verified live against
+ * the API on 2026-07-30 — unlike the single-project form of the same endpoint,
+ * which does honour it). Without a client-side strip, *Include Movie JSON* off
+ * would be a no-op and every item would carry a multi-kilobyte string that n8n
+ * then renders in the UI.
  */
 export async function execute(
 	this: IExecuteFunctions,
@@ -25,6 +33,7 @@ export async function execute(
 	const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
 	const limit = returnAll ? Infinity : (this.getNodeParameter('limit', itemIndex, 50) as number);
 	const additionalOptions = this.getNodeParameter('additionalOptions', itemIndex, {}) as IDataObject;
+	const includeMovieJson = additionalOptions.includeMovieJson === true;
 
 	const qs: IDataObject = {
 		limit: returnAll ? MAX_PAGE_SIZE : Math.min(Math.max(limit, 1), MAX_PAGE_SIZE),
@@ -36,7 +45,7 @@ export async function execute(
 	const dateEnd = toIsoDate(additionalOptions.dateEnd);
 	if (dateEnd !== undefined) qs.date_end = dateEnd;
 
-	if (additionalOptions.includeMovieJson !== true) qs.format = 'simple';
+	if (!includeMovieJson) qs.format = 'simple';
 
 	const movies: IDataObject[] = [];
 
@@ -56,5 +65,8 @@ export async function execute(
 
 	const selected = returnAll ? movies : movies.slice(0, limit);
 
-	return selected.map((movie) => ({ json: movie, pairedItem: { item: itemIndex } }));
+	return selected.map((movie) => ({
+		json: includeMovieJson ? movie : stripMovieJson(movie),
+		pairedItem: { item: itemIndex },
+	}));
 }

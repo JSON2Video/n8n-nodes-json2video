@@ -5,6 +5,7 @@ import {
 	attachProjectId,
 	extractApiErrorMessage,
 	getErrorStatusCode,
+	toMovieLookupError,
 } from '../../helpers/errors';
 import { simplifyMovieResponse } from '../../helpers/movie';
 import {
@@ -101,7 +102,10 @@ export async function execute(
 
 			// Client errors are permanent: wrong key, wrong project ID.
 			if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
-				throw attachProjectId(error as Error, project);
+				throw attachProjectId(
+					toMovieLookupError(this.getNode(), error, project, itemIndex) as Error,
+					project,
+				);
 			}
 
 			consecutiveFailures += 1;

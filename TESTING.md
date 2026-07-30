@@ -3,13 +3,185 @@
 Verification notes for this package, kept alongside the code so each phase of
 the build plan (`integrations/plans/n8n.md`) can record how it was checked.
 
-Two layers:
+Three layers:
 
 - **Automated unit tests** (`test/`, Vitest) cover the pure logic that has no
   business being verified by hand: payload building, JSON validation, the
   polling backoff and API error extraction. Run them with `npm test`.
-- **Manual checks** in n8n's own dev sandbox (`npm run dev`) cover everything
-  that needs a real API key and a real render.
+- **A live end-to-end pass** against the production JSON2Video API, run
+  2026-07-30 — see [Live end-to-end pass](#live-end-to-end-pass--2026-07-30).
+  All 21 operations, the credential and all 6 dynamic dropdowns were driven
+  through the *compiled* handlers in `dist/` with a mock `IExecuteFunctions`
+  that performs real HTTP requests. This is what closed the "pending live
+  check" sections of Phases 3–6.
+- **Manual checks** in n8n's own dev sandbox (`npm run dev`) for the handful of
+  things only a browser and a human can confirm (the credential modal, the
+  parameter panel, item linking).
+
+## Live end-to-end pass — 2026-07-30
+
+Run against `https://api.json2video.com/v2` with a real account key
+(101 templates, 52 movies in history, 200 MB in the Drive). Method: a harness
+imported the compiled node from `dist/nodes/Json2Video/` and called
+`Json2Video.execute` / `Json2Video.methods.*` through a mock
+`IExecuteFunctions` / `ILoadOptionsFunctions` whose
+`helpers.httpRequestWithAuthentication` performed real requests with the
+`x-api-key` header, and whose `helpers.httpRequest` performed the unauthenticated
+presigned S3 `PUT`. Driving the node's own code — rather than curl — is what
+makes the result meaningful: every parameter default, every `extractValue`,
+every response shaping step and every error path is the shipped one.
+
+Ground rules that were followed: only new resources were created, all named with
+an `n8n-e2e-` prefix; nothing pre-existing was read-modify-written; every created
+resource was deleted and the deletion re-verified; renders were capped at 3 s of
+output at `sd`.
+
+### Result: 21/21 operations PASS
+
+| Resource | Operation | Result |
+|---|---|---|
+| Credential | valid key → 200 | PASS |
+| Credential | invalid key → `400` → friendly message | PASS (`{"success":false,"message":"Error: Invalid API Key"}` → "Invalid JSON2Video API key — check the credential.") |
+| Movie | Create | PASS — returns exactly `{ success, project, timestamp }` |
+| Movie | Get Status | PASS — Simplify on/off, *Include Movie JSON* both ways |
+| Movie | Get Many | PASS — Limit, Return All (52 movies, server-side paging), date range |
+| Movie | **Render and Wait** | PASS — template mode, reached `done` in 8.1 s, emitted `url` (HTTP 200, `video/mp4`), `duration: 2`, `size`, `width`/`height`, `remaining_quota` |
+| Movie | Delete | PASS — soft delete, idempotent, history entry keeps `deleted_at` with `url: null` |
+| Template | Get Many | PASS — 101 templates, `updated_at` desc, Limit 3 → exactly 3, Tag filter (client-side, B10) |
+| Template | Get | PASS — Simplify on/off, `movie` verbatim as a string, `format=jsonschema` |
+| Template | Create | PASS — 20-char ID, `id` **and** `templateId` (B8), tags + prompt stored |
+| Template | Update | PASS — name-only update left tags/prompt/movie untouched; empty Update Fields fails client-side with **zero** requests |
+| Template | Duplicate | PASS — variables deep-merged into the copy, dual ID (B8) |
+| Template | Delete | PASS — node adds `templateId`/`deleted` the API omits; re-read then 400s |
+| Template | Get Library | PASS — 19 published; `tags=real estate` → 21 (server-side union, as documented); no `movie` field |
+| Media | Upload File | PASS — see [the two-step upload](#the-two-step-upload-phase-6s-open-risk) below |
+| Media | Get File | PASS — Simplify on/off; missing path → `File not found` |
+| Media | List Folder | PASS — root, Limit, Return All, `type` and `q` filters, and the informational single item for an empty folder |
+| Media | Get Folder Tree | PASS — 7 folders, cross-checked against Get Storage Usage |
+| Media | Move File | PASS — including **to the root with an empty `destination`**, the case that breaks if the key is omitted |
+| Media | Delete File | PASS — node adds the fields the bare `{ success, timestamp }` omits |
+| Media | Create Folder | PASS — idempotent second call → `created: false`, `message: "Folder already exists"` |
+| Media | Delete Folder | PASS — refuses non-empty and `temp`; root refused client-side |
+| Media | Get Storage Usage | PASS — `used_bytes`, `free_allowance: 52428800`, `blocked: false` |
+| Dropdowns | `searchTemplates` (101), `searchLibraryTemplates` (19), `getTemplateTags` (7), `getMediaFolders` (7), `getMediaFiles` (16), `getMediaFileNames` (16) | PASS — real, well-labelled options; all six return an **empty** list (never throw) with a bad key |
+
+Other behaviours confirmed in the same pass:
+
+- **Polling cadence.** First status check 5.0 s after the `POST`, never faster
+  than the 5 s floor. The render finished on the first poll, so the 5 → 8 → 11 →
+  17 → 25 → 30 backoff tiers remain covered by `polling.test.ts` only.
+- **The `POST` is never retried** — one `POST` per Render and Wait, verified from
+  the harness's HTTP log.
+- **Render failure path.** A movie whose image `src` 404s produced
+  `Scene #1, element #1: Failed to download '…' (404)` as the error message and
+  `Render failed for project <16-char id>: …` as the description, with the
+  project ID attached. With *Fail On Render Error* off, the same movie came back
+  as a normal item with `status: "error"`.
+- **Client-side validation costs no request.** `{"scenes": [}` failed with
+  `Movie JSON is not valid JSON: …` and **0** HTTP requests; likewise the empty
+  Update Fields guard and the missing-upload-name guard.
+- **Continue On Fail** emitted `{ error: "…" }` with `pairedItem` intact.
+- **Multiple input items.** Three binary items through one Upload File node
+  produced three uploads and `pairedItem` `0,1,2`; three items through Get Many
+  likewise.
+
+### The two-step upload (Phase 6's open risk)
+
+This was the one implementation contract nobody could verify without a live key,
+so it was checked in detail. A 70-byte PNG was uploaded into `n8n-e2e-folder`:
+
+- The `PUT` went to `json2video-media.s3.us-east-1.amazonaws.com` and carried
+  **exactly two headers: `Content-Type: image/png` and `Content-Length: 70`**.
+  No `x-api-key`, no `Authorization` — which is the requirement, since an extra
+  header invalidates the presigned signature. HTTP 200.
+- `Content-Type` on the `PUT` matched the `contentType` sent in step 1, as S3
+  signs it.
+- The stored object was **byte-identical**: downloading the emitted `url` and
+  comparing SHA-256 against the source buffer matched.
+- The emitted item was
+  `{ success, name, folder, path, contentType, size, url }` with **no
+  `uploadUrl`** — the signed secret never reaches the output or the logs.
+- Client-side name sanitisation agrees with the server: `mi vídeo (final).png`
+  was stored as `mi_v_deo__final_.png`, and `Get File` on the sanitised path
+  found it.
+- A second upload of the same name failed with the API's
+  `A file with this name already exists. Delete it first.` plus the appended hint.
+
+### Bugs found and fixed
+
+Three, all found only because the node's own code was driven end-to-end.
+
+1. **Every appended error hint in the Media resource was dead code.**
+   n8n's `NodeApiError` stores the API payload under `errorResponse`, which
+   `getErrorResponseBody` did not inspect. Since the shared transport already
+   wraps failures in a `NodeApiError`, the *second* look that
+   `deleteFolder.ts` and `upload.ts` take at the same error re-extracted
+   `"The JSON2Video API returned HTTP 400"` instead of the API's message — so
+   `describeUploadRegistrationError` / `describeDeleteFolderError` matched
+   nothing and silently appended no hint. Every unit test still passed, because
+   they call those builders with the raw message. Fixed by adding
+   `errorResponse` to the candidate list; the 409-duplicate, non-empty-folder
+   and `temp`-folder hints now all appear. Regression test:
+   `errors.test.ts` → "re-extraction from an already-wrapped NodeApiError".
+2. **Get Many's *Include Movie JSON* was a no-op.** `GET /v2/movies` in list
+   mode ignores `format=simple` and always returns each movie's submitted
+   document, so items carried a multi-kilobyte `json` string regardless of the
+   option (`operations.md` B13). Fixed with a client-side `stripMovieJson`;
+   item size dropped from 558 to 375 bytes on this account's short documents,
+   and by kilobytes on real ones. Regression test: `movie.test.ts` →
+   `stripMovieJson`.
+3. **An unknown project ID surfaced a leaked server-side `TypeError`.**
+   `GET /v2/movies?project=<unknown>` answers `400` with
+   `{"success":false,"message":"TypeError: Cannot read properties of null (reading 'success')"}`
+   — not the `200` + `status: "error"` the contract claimed (`operations.md`
+   B14). The node showed that verbatim as the headline error. Fixed with
+   `toMovieLookupError`, which maps a `400` carrying a leaked runtime error onto
+   `No movie found with project ID <id>` and keeps the API's raw text in the
+   description. Applied to Get Status, Delete and the Render and Wait 4xx abort.
+   Regression tests: `errors.test.ts` → `isInternalApiErrorMessage`,
+   `toMovieLookupError`.
+
+`operations.md` was corrected in the same pass: B13–B18 added, the "unknown
+project returns 200" claim replaced, the `404` rows flagged as never actually
+used, and the deferred element validation documented.
+
+### Still not verifiable without more than an API key
+
+- **Role gating** (a `render`-only key must fail Template Create/Update/
+  Duplicate/Delete). Only one key was available, and it has full permissions.
+- **Webhook delivery.** The flat *Webhook URL* → `exports[].destinations[]`
+  expansion is unit-tested (`movie.test.ts`), but no live callback was received
+  because that needs a publicly reachable endpoint.
+- **n8n-runtime behaviours**: the credential modal's masking and Test button,
+  "Retry On Fail" not retrying the `POST` (n8n's own behaviour), the Item
+  Linking panel, and the interaction with n8n Cloud execution timeouts.
+
+### Cost and cleanup
+
+Five movies were submitted; four rendered 2 s each at `sd` (**≈ 8 credits**),
+and the fifth — the deliberately invalid document from B15 — failed instantly
+with `consumed_credits: []`.
+
+Everything created was deleted and the deletion re-verified by re-querying:
+6 templates, 5 movies (soft-deleted; history rows keep `deleted_at` and
+`url: null`), 4 folders (`n8n-e2e-folder`, `-hints`, `-multi`, `-race`) and 10
+files. The account finished the pass with its original 101 templates, 7 folders
+and 30 files — **no leftover template, movie, folder or file**, confirmed by
+walking every folder in the Drive.
+
+One accounting residue, worth knowing about: `used_bytes` ended **70 bytes**
+above the starting `200190943`. During a repeat run, `Move File` on a file that
+had just been uploaded (still `status: "pending"`) reported `success: true`, and
+the file record then disappeared — `Get File` returned `File not found`, `List
+Folder` showed nothing, the parent folder deleted as empty, and both candidate
+S3 URLs answered `403`. So the object and the record are gone, but the 70 bytes
+had already been added to the storage counter (the counter increments on the
+`pending` → `uploaded` transition, verified separately) and were never
+decremented. A deliberate reproduction of the same sequence afterwards was
+clean (delta 0), so this is a **non-deterministic API-side race in `PUT
+/v2/media/file`, not node behaviour** — but it can silently lose a file that
+`Move File` just said it moved, which is worth raising with the API team. There
+is no public endpoint that can correct the counter; 70 bytes out of 200 MB.
 
 ## Phase 3 — Credentials (`Json2VideoApi`)
 
@@ -60,16 +232,27 @@ custom node (via `n8n-node dev`, using `~/.n8n-node-cli/.n8n/custom`).
    `npm run dev`) and confirm the API key value never appears in any log
    line, even on the failure path.
 
-### Phase 3 pending live check
+### Phase 3 live check — DONE 2026-07-30
 
-**Not yet performed.** There is no JSON2Video test API key available in this
-environment — Phase 0 (accounts & external prerequisites) reserves one for
-end-to-end testing, but it has not been handed over yet. Steps 1–3, 5, 6 and 7
-above can be (and were) reasoned through / dry-run against the code, but step
-4 (the actual "valid key succeeds" path) and the live confirmation of step 5
-against the real API **still need a human with a real JSON2Video API key** to
-run `npm run dev` and click through the credential UI. Do this before
-considering Phase 3 fully closed.
+Steps 4 and 5 are **confirmed against the production API**:
+
+- **Valid key** → `GET /v2/templates` returns `200` with the account's 101
+  templates. The credential's `test.request` is exactly this call, so a real key
+  produces the green indicator.
+- **Invalid key** (`not-a-real-key`) → HTTP **`400`** with
+  `{"success":false,"message":"Error: Invalid API Key"}`. This is the premise the
+  credential's `rules: [{ type: 'responseCode', value: 400, … }]` entry rests on,
+  and it holds — the entry is correct and must not be dropped in a refactor
+  (`operations.md` B11). Through the node's own error path the same response
+  becomes "Invalid JSON2Video API key — check the credential.", never a bare
+  "400 Bad Request".
+- The key never appeared in any emitted item, error payload or log line, on
+  either path.
+
+Steps 1–3 and 6 (masked field, documentation link, `required: true` refusing an
+empty value) are pure n8n UI behaviour driven by the credential definition and
+still want a human eyeball in `npm run dev` before submission — they cannot fail
+in a way the API can reveal.
 
 ---
 
@@ -97,12 +280,28 @@ What the unit tests lock down (`test/`):
 | `errors.test.ts` | Error extraction from B7-shaped bodies (`{ message }` / `{ message, code }` with **no `success` field**), `body.error` and status-text fallbacks, the invalid-API-key 400 → actionable message mapping (B11), status-code discovery, project ID round-trip on errors |
 | `movieRequestBody.test.ts` | End-to-end parameter → request body for both input modes, including variables as fields vs JSON, and the "no template selected" guard |
 
-### Live checks pending — run these the moment the API key arrives
+### Live checks — DONE 2026-07-30
 
-Still **not performed**: there is no JSON2Video API key in this environment
-(Phase 0 reserves one). Start the sandbox with `npm run dev`, add the
-**JSON2Video API** credential, then work through the list. All four are
-acceptance criteria of Phase 4 in `integrations/plans/n8n.md`.
+All of the below were run against the production API; see
+[Live end-to-end pass](#live-end-to-end-pass--2026-07-30) for the evidence.
+Outcome per item:
+
+| # | Item | Result |
+|---|---|---|
+| 1 | Template render via Render and Wait | **PASS** — `From List` listed all 101 templates; render reached `done` in 8.1 s with a playable `url`, `duration: 2`, `size: 5262`, `640x480`, `remaining_quota`. First poll 5.0 s after the `POST`. |
+| 2 | Raw-JSON render + Create | **PASS** — Create returns `{ success, project, timestamp }` and nothing else. |
+| 3 | Broken movie surfaces the real message | **PASS with a contract correction** — the client-side case behaves as described (0 requests). The *server-side* case does **not**: `POST` accepts an element without `src` with HTTP 200 and a project ID, and the error only appears at render time (`operations.md` B15). The render-failure path itself is confirmed: `Render failed for project <id>: Scene #1, element #1: Failed to download '…' (404)`, and *Fail On Render Error* off emits the item with `status: "error"`. |
+| 4 | Delete | **PASS** — `{ success, project, deleted_at, timestamp }`, idempotent, history row keeps `deleted_at` with `url: null`. |
+| 5 | Get Status, Simplify + Include Movie JSON | **PASS** both ways. |
+| 6 | Bad project IDs | **PASS with a bug fixed** — 15 chars fails client-side. A well-formed unknown ID returns `400` with a leaked `TypeError`, not `200`/`status: "error"` as this file previously claimed; the node now maps it to `No movie found with project ID <id>` (`operations.md` B14). |
+| 7 | Get Many, Limit / Return All / date range | **PASS with a bug fixed** — *Include Movie JSON* off was a no-op because the list endpoint ignores `format=simple`; now stripped client-side (`operations.md` B13). |
+| 8 | Webhook URL callback | **NOT VERIFIED** — needs a publicly reachable endpoint. The expansion into `exports[].destinations[]` stays unit-tested only. |
+| 9 | Continue On Fail | **PASS** — `{ error: "…" }` with `pairedItem` intact. |
+| 10 | Timeout path | **NOT VERIFIED** live — every test render finished in seconds, and forcing a timeout means paying for a long render. Clamps and messages are unit-tested. |
+| 11 | Never retry the `POST` | **PASS** — one `POST` per Render and Wait in the HTTP log. n8n's own "Retry On Fail" behaviour still needs the sandbox. |
+
+The original instructions, kept for anyone re-running the pass by hand in
+`npm run dev`:
 
 1. **Template render end-to-end via Render and Wait.**
    Movie → *Render and Wait*, Input Mode *Template*. Check first that the
@@ -202,13 +401,22 @@ What `test/template.test.ts` locks down:
 `test/movie.test.ts`, `movieRequestBody.test.ts`, `polling.test.ts` and
 `errors.test.ts` are unchanged and still green (Phase 4 regression guard).
 
-### Live checks pending — run these the moment the API key arrives
+### Live checks — DONE 2026-07-30
 
-Still **not performed**: there is no JSON2Video API key in this environment
-(Phase 0 reserves one). Start the sandbox with `npm run dev`, add the
-**JSON2Video API** credential (needs at least the `editor` role for Create,
-Update, Duplicate and Delete — a `render`-only key must fail those four with
-"This API key needs the Editor role to manage templates").
+| # | Item | Result |
+|---|---|---|
+| 1 | Get Many + Tag dropdown | **PASS** — 101 templates, `updated_at` desc, Limit 2 → exactly 2 (client-side, B10), Return All → all 101. `getTemplateTags` returned the account's 7 real tags, deduplicated and sorted; filtering on one narrowed 101 → 1. |
+| 2 | Get | **PASS** — `From List` lists the account's templates; `movie` came back as a **string**, left verbatim; Simplify off gives `{ success, template, timestamp }`; `format=jsonschema` drops `movie` and returns a JSON Schema in `variables`. Two undocumented fields recorded in `operations.md`: `owner` (boolean) and `prompt` (a boolean **flag**, not the prompt text). |
+| 3 | Create | **PASS** — `{ success: true, templateId: <20 chars>, id: <same>, timestamp }` (B8). Tags `n8n-e2e, n8n-e2e-two` and the AI prompt both landed. The new template appeared immediately in `searchTemplates`. |
+| 4 | Update | **PASS** — name-only update left tags, prompt and movie untouched; empty Update Fields failed client-side with **0** requests. |
+| 5 | Duplicate | **PASS** — dual ID (B8); variables supplied through the key/value fields were deep-merged into the copy's `movie` (verified by reading the copy back). |
+| 6 | Delete | **PASS** — `{ success: true, templateId: <id>, deleted: true }`, fields the raw API response omits. A subsequent Get returns `Template <id> not found` (HTTP **400**, not 404 — `operations.md` B16). |
+| 7 | Get Library | **PASS** — 19 published templates with `video_url`/`thumbnail_url` and **no** `movie`; `tags=real estate` returned 21, confirming the documented server-side union rather than a filter; Limit slices client-side. |
+| 8 | Role gating | **NOT VERIFIED** — only one, fully-permissioned key was available. |
+| 9 | Continue On Fail | **PASS** (verified on Movie; same code path in `Json2Video.node.ts`). |
+| 10 | Movie → Create not regressed | **PASS** — the Movie resource's template locator rendered successfully in the same pass. |
+
+The original instructions, kept for anyone re-running the pass by hand:
 
 1. **Get Many.** With no Additional Options, expect one item per template,
    sorted by `updated_at` descending. Set *Return All* off with *Limit* 2 on
@@ -324,13 +532,26 @@ What `test/media.test.ts` locks down:
 `errors.test.ts` and `template.test.ts` are unchanged and still green
 (Phase 4 + 5 regression guard).
 
-### Live checks pending — run these the moment the API key arrives
+### Live checks — DONE 2026-07-30
 
-Still **not performed**: there is no JSON2Video API key in this environment
-(Phase 0 reserves one). Start the sandbox with `npm run dev` and add the
-**JSON2Video API** credential (role `render` is enough for every Media
-operation). Item 1 is the Phase 6 acceptance criterion in
-`integrations/plans/n8n.md`.
+| # | Item | Result |
+|---|---|---|
+| 1 | Upload a real binary end-to-end | **PASS** — see [the two-step upload](#the-two-step-upload-phase-6s-open-risk). Emitted `{ success, name, folder, path, contentType, size, url }`, no `uploadUrl`; stored bytes byte-identical (SHA-256 match); `mi vídeo (final).png` → `mi_v_deo__final_.png` with the server agreeing. |
+| 2 | Upload failure paths | **PASS** — no file name → client-side failure with **0** requests; duplicate → the API's 409 message verbatim **plus** the Delete File hint (this hint was broken until this pass, see bug 1). Oversized (>500 MB) is unit-tested only. Step 2 was never observed failing. **The `PUT` carried no `x-api-key` and the correct `Content-Length`/`Content-Type`** — Phase 6's open risk, now closed. |
+| 3 | Get File | **PASS** — Simplify on/off; a missing path returns `File not found` (HTTP 400, B16). **Note:** right after a successful upload the record reads `status: "pending"` for a few seconds before flipping to `uploaded`, so `pending` is not proof that step 2 failed (`operations.md` B17). |
+| 4 | List Folder | **PASS** — root emits one item per file with `folders` on the first item only; an empty folder emits the single informational item; Limit 3 → exactly 3; Return All → all 16; `type=video` → 2, `q=zillow` → 2. The `total` (filtered) vs `total_files` (whole folder) distinction exists in the raw response and is confirmed, but the node only surfaces the counters on the empty-folder item — by design, so the non-empty output schema stays "one item per file". |
+| 5 | Get Folder Tree | **PASS** — 7 folders including `/` and `temp`, with `files` and `size`; consistent with Get Storage Usage. |
+| 6 | Create Folder | **PASS** — idempotent second call → `created: false` + `message: "Folder already exists"`; empty path refused client-side. |
+| 7 | Move File | **PASS** — including the important case: moving to the **root** with an empty `destination` works, so the "always send `destination`" rule is confirmed. Round-tripped back into the folder and verified with Get File. |
+| 8 | Delete Folder | **PASS** — non-empty → `Folder is not empty. Delete all files first.` **plus** the hint; `temp` → `Cannot delete the temp folder` **plus** the hint; root refused client-side. Both hints were dead code before this pass (bug 1). |
+| 9 | Delete File | **PASS** — `{ success, name, folder, path, deleted: true }`, all added by the node; a second delete returns the API's `File not found`. |
+| 10 | Get Storage Usage | **PASS** — `used_bytes`, `free_allowance: 52428800`, `credits_per_week`, `blocked: false`, `blocked_at: null`; Simplify off gives the envelope. |
+| 11 | Dropdown degradation | **PASS** — with a deliberately wrong key all six dropdowns returned an **empty** list and none threw. |
+| 12 | Continue On Fail | **PASS**. |
+| 13 | Multiple input items | **PASS** — three binary items → three uploads, three output items, `pairedItem` 0/1/2. |
+| 14 | Phases 4 and 5 not regressed | **PASS** — a Render and Wait and a Template Get Many ran in the same pass. |
+
+The original instructions, kept for anyone re-running the pass by hand:
 
 1. **Upload a real binary from a previous node and see it in the dashboard
    Drive.** Build `HTTP Request` (GET a small MP4 or PNG, *Response Format*
@@ -429,7 +650,8 @@ operation). Item 1 is the Phase 6 acceptance criterion in
 
 ### Automated checks (done)
 
-- `.github/workflows/ci.yml` — lint + build + `npm test` (166 tests) on every
+- `.github/workflows/ci.yml` — lint + build + `npm test` (175 tests since the
+  2026-07-30 live pass added 9 regression tests; 166 before) on every
   push/PR to `main`. Green on GitHub Actions.
 - `.github/workflows/publish.yml` — scaffolded via
   `n8n-node release --init-workflow` (`@n8n/node-cli` 0.41.2), cross-checked
@@ -460,9 +682,16 @@ operation). Item 1 is the Phase 6 acceptance criterion in
 
 ### Not done yet
 
-- **`1.0.0` is reserved for after a live end-to-end pass** against the real
-  JSON2Video API (needs the Phase 0 test API key, not yet available — see the
-  "Live checks pending" sections above). Do not cut `1.0.0` until those pass.
+- **`1.0.0`** was gated on the live end-to-end pass, which is now **done and
+  green** (2026-07-30, three bugs found and fixed — see
+  [Live end-to-end pass](#live-end-to-end-pass--2026-07-30)). What remains before
+  cutting it is not API-related:
+  - a sandbox run of `npm run dev` for the credential modal and parameter panel
+    (Phase 3 steps 1–3 and 6);
+  - the clean-install test below.
 - Install test on a clean self-hosted n8n instance (`Settings → Community
   Nodes → n8n-nodes-json2video`) — still pending, tracked for Phase 8's
   acceptance criteria / Phase 9 submission prep.
+- **Not verifiable with one API key**: role gating (needs a second,
+  `render`-only key) and live webhook delivery (needs a publicly reachable
+  endpoint).

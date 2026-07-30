@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { INode } from 'n8n-workflow';
+import { NodeApiError } from 'n8n-workflow';
 
 import {
 	attachProjectId,
@@ -7,7 +9,19 @@ import {
 	getAttachedProjectId,
 	getErrorStatusCode,
 	INVALID_API_KEY_MESSAGE,
+	isInternalApiErrorMessage,
+	toMovieLookupError,
+	toNodeApiError,
 } from '../nodes/Json2Video/helpers/errors';
+
+const node = {
+	id: 'test',
+	name: 'JSON2Video',
+	type: 'n8n-nodes-json2video.json2Video',
+	typeVersion: 1,
+	position: [0, 0],
+	parameters: {},
+} as unknown as INode;
 
 /** Shape n8n's HTTP helper throws for a non-2xx JSON response. */
 function httpError(statusCode: number, body: unknown, statusMessage?: string) {
@@ -83,6 +97,98 @@ describe('getErrorStatusCode', () => {
 		expect(getErrorStatusCode({ response: { status: 503 } })).toBe(503);
 		expect(getErrorStatusCode({ httpCode: '429' })).toBe(429);
 		expect(getErrorStatusCode(new Error('socket hang up'))).toBeUndefined();
+	});
+});
+
+// The transport already wraps failures in a NodeApiError, so every second look
+// at that error (upload / deleteFolder hints, toMovieLookupError) re-extracts
+// from a NodeApiError, not from the raw transport error. Losing the API message
+// there silently disabled all the appended hints.
+describe('re-extraction from an already-wrapped NodeApiError', () => {
+	it('still finds the API message', () => {
+		const wrapped = toNodeApiError(
+			node,
+			httpError(400, { success: false, message: 'Folder is not empty. Delete all files first.' }),
+			0,
+		);
+
+		expect(extractApiErrorMessage(wrapped)).toBe('Folder is not empty. Delete all files first.');
+		expect(getErrorStatusCode(wrapped)).toBe(400);
+	});
+
+	it('still finds the API message for a 409 duplicate upload', () => {
+		const wrapped = toNodeApiError(
+			node,
+			httpError(409, { message: 'A file with this name already exists. Delete it first.' }),
+		);
+
+		expect(extractApiErrorMessage(wrapped)).toBe(
+			'A file with this name already exists. Delete it first.',
+		);
+		expect(getErrorStatusCode(wrapped)).toBe(409);
+	});
+});
+
+describe('isInternalApiErrorMessage', () => {
+	it('recognises a leaked runtime error', () => {
+		// Exactly what GET /v2/movies?project=<unknown> answers (live, 2026-07-30).
+		expect(isInternalApiErrorMessage("TypeError: Cannot read properties of null (reading 'success')")).toBe(
+			true,
+		);
+		expect(isInternalApiErrorMessage('ReferenceError: x is not defined')).toBe(true);
+	});
+
+	it('leaves real API messages alone', () => {
+		expect(isInternalApiErrorMessage('File not found')).toBe(false);
+		expect(isInternalApiErrorMessage('Folder is not empty. Delete all files first.')).toBe(false);
+		expect(
+			isInternalApiErrorMessage(
+				"Scene #1, element #1: Failed to download 'https://example.com/a.png' (404)",
+			),
+		).toBe(false);
+	});
+});
+
+describe('toMovieLookupError', () => {
+	it('replaces the leaked TypeError of an unknown project ID', () => {
+		// The transport hands over an already-wrapped NodeApiError.
+		const error = toNodeApiError(
+			node,
+			httpError(400, {
+				success: false,
+				message: "TypeError: Cannot read properties of null (reading 'success')",
+			}),
+			0,
+		);
+
+		const mapped = toMovieLookupError(node, error, 'zzzzzzzzzzzzzzzz', 0);
+
+		expect(mapped).toBeInstanceOf(NodeApiError);
+		expect((mapped as NodeApiError).message).toBe('No movie found with project ID zzzzzzzzzzzzzzzz');
+		// The API's own text is kept, just moved out of the headline.
+		expect((mapped as NodeApiError).description).toContain(
+			"TypeError: Cannot read properties of null (reading 'success')",
+		);
+	});
+
+	it('passes every other failure through untouched', () => {
+		const invalidKey = toNodeApiError(node, httpError(400, { message: 'Error: Invalid API Key' }));
+		expect(toMovieLookupError(node, invalidKey, 'JkGxEoPRF9EgRb32')).toBe(invalidKey);
+
+		const notFound = toNodeApiError(
+			node,
+			httpError(400, { message: 'Movie JkGxEoPRF9EgRb32 not found' }),
+		);
+		expect(toMovieLookupError(node, notFound, 'JkGxEoPRF9EgRb32')).toBe(notFound);
+
+		// A 5xx is retryable and must not be reported as "no movie found".
+		const serverError = toNodeApiError(
+			node,
+			httpError(500, {
+				message: "TypeError: Cannot read properties of null (reading 'success')",
+			}),
+		);
+		expect(toMovieLookupError(node, serverError, 'JkGxEoPRF9EgRb32')).toBe(serverError);
 	});
 });
 

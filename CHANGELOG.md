@@ -6,6 +6,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Error hints now actually appear.** n8n's `NodeApiError` keeps the API payload
+  under `errorResponse`, which the error extractor did not inspect. Because the
+  shared transport already wraps failures in a `NodeApiError`, taking a second
+  look at one lost the API's message and fell back to a bare "HTTP 400" — which
+  silently disabled every appended hint in the Media resource (duplicate upload,
+  non-empty folder, `temp` folder, blocked storage).
+- **Movie → Get Many: *Include Movie JSON* off now really drops it.** The API
+  ignores `format=simple` on the movie *list* endpoint and always returns each
+  movie's submitted document, so the option had no effect and every item carried
+  a multi-kilobyte string. It is now removed client-side.
+- **Movie → Get Status / Delete: a clear message for an unknown project ID.** The
+  API answers HTTP 400 with a leaked internal `TypeError` for a project that does
+  not exist; the node now reports `No movie found with project ID <id>` and keeps
+  the API's raw text in the error description.
+
+All three were found by a live end-to-end pass against the production
+JSON2Video API (2026-07-30) covering all 21 operations, the credential and all
+six dynamic dropdowns. See `TESTING.md`.
+
 ## [0.2.0] - 2026-07-29
 
 Pipeline-validation release: the first version published via GitHub Actions

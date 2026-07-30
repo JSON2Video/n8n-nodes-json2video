@@ -192,6 +192,22 @@ export function validateProjectId(value: unknown): string {
 }
 
 /**
+ * Removes the submitted Movie JSON from a movie object.
+ *
+ * `GET /v2/movies` in list mode ignores `format=simple` and always returns
+ * `json`, so *Include Movie JSON* off has to be honoured client-side or the
+ * option would do nothing (see `actions/movie/getAll.ts`). The input is never
+ * mutated.
+ */
+export function stripMovieJson(movie: IDataObject): IDataObject {
+	if (!('json' in movie)) return movie;
+
+	const stripped: IDataObject = { ...movie };
+	delete stripped.json;
+	return stripped;
+}
+
+/**
  * Strips the response envelope of `GET /v2/movies?project=`: emits the movie
  * object itself and keeps `remaining_quota` alongside it, because it is the
  * cheapest quota pre-flight check a workflow author has.

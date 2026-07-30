@@ -1,6 +1,7 @@
-import type { IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
+import type { IDataObject, IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
+import { toMovieLookupError } from '../../helpers/errors';
 import { validateProjectId } from '../../helpers/movie';
 import { json2VideoApiRequest } from '../../transport';
 
@@ -21,10 +22,15 @@ export async function execute(
 		throw new NodeOperationError(this.getNode(), (error as Error).message, { itemIndex });
 	}
 
-	const response = await json2VideoApiRequest.call(this, 'DELETE', '/movies', {
-		qs: { project: projectId },
-		itemIndex,
-	});
+	let response: IDataObject;
+	try {
+		response = await json2VideoApiRequest.call(this, 'DELETE', '/movies', {
+			qs: { project: projectId },
+			itemIndex,
+		});
+	} catch (error) {
+		throw toMovieLookupError(this.getNode(), error, projectId, itemIndex);
+	}
 
 	return [{ json: response, pairedItem: { item: itemIndex } }];
 }

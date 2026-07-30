@@ -8,6 +8,7 @@ import {
 	parseExportsParameter,
 	parseJsonObjectParameter,
 	simplifyMovieResponse,
+	stripMovieJson,
 	validateProjectId,
 } from '../nodes/Json2Video/helpers/movie';
 
@@ -214,6 +215,36 @@ describe('simplifyMovieResponse', () => {
 
 	it('returns the raw response when there is no movie object', () => {
 		expect(simplifyMovieResponse({ success: true })).toEqual({ success: true });
+	});
+});
+
+// `GET /v2/movies` in list mode ignores `format=simple` and always returns the
+// submitted Movie JSON (verified live 2026-07-30), so Get Many has to honour
+// "Include Movie JSON: off" client-side or the option does nothing.
+describe('stripMovieJson', () => {
+	it('drops the json field and keeps everything else', () => {
+		const movie = {
+			project: 'JkGxEoPRF9EgRb32',
+			status: 'done',
+			json: '{"scenes":[]}',
+			duration: 2,
+		};
+		expect(stripMovieJson(movie)).toEqual({
+			project: 'JkGxEoPRF9EgRb32',
+			status: 'done',
+			duration: 2,
+		});
+	});
+
+	it('never mutates the input', () => {
+		const movie = { project: 'JkGxEoPRF9EgRb32', json: '{"scenes":[]}' };
+		stripMovieJson(movie);
+		expect(movie.json).toBe('{"scenes":[]}');
+	});
+
+	it('returns the same object when there is no json field', () => {
+		const movie = { project: 'JkGxEoPRF9EgRb32', status: 'done' };
+		expect(stripMovieJson(movie)).toBe(movie);
 	});
 });
 

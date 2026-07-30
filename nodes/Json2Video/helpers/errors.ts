@@ -43,6 +43,13 @@ function nonEmptyString(value: unknown): string | undefined {
  * Finds the JSON body the API answered with, wherever the HTTP helper parked
  * it. Different n8n versions and transports expose it as `response.body`,
  * `response.data`, `error.body` or `error.error`.
+ *
+ * `errorResponse` is where `NodeApiError` itself keeps the payload it was
+ * constructed with. It has to be in this list because the error the transport
+ * throws is *already* a `NodeApiError`: without it, any second look at that
+ * error (`deleteFolder`, `upload`, `toMovieLookupError`) loses the API's own
+ * message and falls back to a bare "HTTP 400", which silently disabled every
+ * appended hint (found during the live pass, 2026-07-30).
  */
 export function getErrorResponseBody(error: unknown): UnknownRecord | undefined {
 	const err = asRecord(error);
@@ -55,6 +62,7 @@ export function getErrorResponseBody(error: unknown): UnknownRecord | undefined 
 		err.body,
 		err.data,
 		err.error,
+		err.errorResponse,
 		err.cause,
 	];
 
@@ -153,6 +161,48 @@ export function extractApiErrorMessage(error: unknown): string {
 	if (looksLikeApiKeyError(message, statusCode)) return INVALID_API_KEY_MESSAGE;
 
 	return message;
+}
+
+/**
+ * True when the API answered with a leaked internal runtime error instead of a
+ * client-actionable message.
+ *
+ * The live case (verified 2026-07-30): `GET /v2/movies?project=<unknown>`
+ * answers HTTP 400 with
+ * `{"success":false,"message":"TypeError: Cannot read properties of null (reading 'success')"}`.
+ * Surfacing that verbatim as the headline error tells a workflow author
+ * nothing, so callers that know what the request was about replace it — see
+ * `toMovieLookupError`.
+ */
+export function isInternalApiErrorMessage(message: string): boolean {
+	return /^(TypeError|ReferenceError|RangeError|SyntaxError|EvalError|URIError|AggregateError)\b/.test(
+		message.trim(),
+	);
+}
+
+/**
+ * Turns the unusable 400 that `GET`/`DELETE /v2/movies?project=` returns for an
+ * unknown project ID into an actionable error. The API's raw message is kept in
+ * the description, so nothing is hidden. Any other failure is returned
+ * untouched.
+ */
+export function toMovieLookupError(
+	node: INode,
+	error: unknown,
+	projectId: string,
+	itemIndex?: number,
+): unknown {
+	const statusCode = getErrorStatusCode(error);
+	const message = extractApiErrorMessage(error);
+
+	if (statusCode !== 400 || !isInternalApiErrorMessage(message)) return error;
+
+	return new NodeApiError(node, (getErrorResponseBody(error) ?? {}) as JsonObject, {
+		message: `No movie found with project ID ${projectId}`,
+		description: `The JSON2Video API rejected the lookup with HTTP 400 and an internal error message ("${message}"), which is what it answers for a project ID that does not exist or belongs to another account. Check that the ID came from Movie: Create on the account this credential belongs to.`,
+		httpCode: String(statusCode),
+		itemIndex,
+	});
 }
 
 /**
