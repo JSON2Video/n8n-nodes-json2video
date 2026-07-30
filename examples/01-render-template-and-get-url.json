@@ -46,17 +46,14 @@
 					"mode": "id"
 				},
 				"specifyVariables": "keypair",
-				"variablesUi": {
-					"variable": [
-						{
-							"name": "quote_text",
-							"value": "={{ $json.quote_text }}"
-						},
-						{
-							"name": "background_image",
-							"value": "={{ $json.background_image }}"
-						}
-					]
+				"variables": {
+					"mappingMode": "defineBelow",
+					"value": {
+						"quote_text": "={{ $json.quote_text }}",
+						"background_image": "={{ $json.background_image }}"
+					},
+					"matchingColumns": [],
+					"schema": []
 				},
 				"additionalOptions": {
 					"resolution": "instagram-story",

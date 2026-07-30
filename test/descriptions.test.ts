@@ -92,7 +92,9 @@ describe('node description', () => {
 		expect(description.length).toBeGreaterThan(60);
 		// The three resources must be discoverable from the tool description alone.
 		expect(description).toMatch(/template/i);
-		expect(description).toMatch(/media/i);
+		// The file area is "Storage" in the nodes panel and "Drive" in our own
+		// product language; the description must name it one way or the other.
+		expect(description).toMatch(/storage|drive/i);
 		expect(description).toMatch(/render/i);
 		expect(description.endsWith('.')).toBe(true);
 	});
@@ -117,12 +119,20 @@ describe('resource and operation parameters', () => {
 	it('lists resources primary-first, not alphabetically, and defaults to Movie', () => {
 		// Deliberately not alphabetical: this order drives the order of the actions
 		// list in the nodes panel, and Movie is what the node exists for. Movie
-		// first, then Template, then Media — do not "fix" this to alphabetical.
+		// first, then Template, then Storage — do not "fix" this to alphabetical.
 		const names = ((resourceProperty?.options ?? []) as INodePropertyOptions[]).map(
 			(option) => option.name,
 		);
-		expect(names).toEqual(['Movie', 'Template', 'Media']);
+		expect(names).toEqual(['Movie', 'Template', 'Storage']);
 		expect(resourceProperty?.default).toBe('movie');
+
+		// The label says Storage, the value stays `media`: it matches the
+		// `/v2/media/*` endpoints and every workflow in `examples/` that already
+		// carries it. The divergence is deliberate — do not "fix" it either.
+		const values = ((resourceProperty?.options ?? []) as INodePropertyOptions[]).map(
+			(option) => option.value,
+		);
+		expect(values).toEqual(['movie', 'template', 'media']);
 
 		// The per-resource parameter blocks follow the same order, so the panel
 		// renders operations in the order the resources are listed.
@@ -249,28 +259,69 @@ describe('parameter conventions', () => {
 		}
 	});
 
-	it('fills the template variable name from the selected template', () => {
-		const nameField = allProperties.find(
-			(prop) => prop.typeOptions?.loadOptionsMethod === 'getTemplateVariables',
+	it('registers every resourceMapper method on the node', () => {
+		const registered = Object.keys(
+			(node.methods as { resourceMapping?: Record<string, unknown> })?.resourceMapping ?? {},
 		);
 
-		expect(nameField?.name).toBe('name');
-		expect(nameField?.type).toBe('options');
-		// A resourceLocator's dependency is its inner `.value`, not the locator.
-		expect(nameField?.typeOptions?.loadOptionsDependsOn).toEqual(['templateId.value']);
-		// The list is a convenience: a typed or expression-driven name still works.
-		expect(nameField?.default).toBe('');
-		expect(nameField?.hint).toBeTruthy();
+		for (const prop of allProperties) {
+			const method = prop.typeOptions?.resourceMapper?.resourceMapperMethod;
+			if (method === undefined) continue;
+			expect(registered, `"${prop.displayName}" references an unregistered method`).toContain(
+				method,
+			);
+		}
+	});
 
-		// Create and Render and Wait share the same form, so both get the dropdown.
-		const variables = properties.find((prop) => prop.name === 'variablesUi');
+	it('renders the template variables as one mapped input each', () => {
+		const variables = properties.find((prop) => prop.name === 'variables');
+
+		// A resourceMapper, not a name/value fixedCollection: the point of the
+		// change is one labelled, typed input per variable the template declares.
+		expect(variables?.type).toBe('resourceMapper');
+		expect(variables?.default).toEqual({ mappingMode: 'defineBelow', value: null });
+		expect(variables?.noDataExpression).toBe(true);
+
+		// A resourceMapper refetches its field list from `loadOptionsDependsOn`, and
+		// a resourceLocator's dependency is its inner `.value`, not the locator.
+		expect(variables?.typeOptions?.loadOptionsDependsOn).toEqual(['templateId.value']);
+
+		const mapper = variables?.typeOptions?.resourceMapper;
+		expect(mapper?.resourceMapperMethod).toBe('getTemplateVariableFields');
+		expect(mapper?.mode).toBe('add');
+		expect(mapper?.fieldWords).toEqual({ singular: 'variable', plural: 'variables' });
+		expect(mapper?.addAllFields).toBe(true);
+		expect(mapper?.multiKeyMatch).toBe(false);
+		// Incoming item fields can be mapped automatically as well.
+		expect(mapper?.supportAutoMap).toBe(true);
+		// The method explains an empty list itself through `emptyFieldsNotice`.
+		expect(mapper?.hideNoDataError).toBe(true);
+
+		// Create and Render and Wait share the same form, so both get the mapper.
 		expect(variables?.displayOptions?.show?.operation).toEqual(['create', 'renderAndWait']);
 		expect(variables?.displayOptions?.show?.specifyVariables).toEqual(['keypair']);
 
-		// The raw-JSON escape hatch is untouched.
+		// The raw-JSON escape hatch is untouched, and remains the only other way
+		// to provide variables — there is no third, competing UI.
 		const variablesJson = properties.find((prop) => prop.name === 'variablesJson');
 		expect(variablesJson?.type).toBe('json');
-		expect(variablesJson?.typeOptions?.loadOptionsMethod).toBeUndefined();
+		expect(variablesJson?.displayOptions?.show?.specifyVariables).toEqual(['json']);
+
+		const specifyVariables = properties.find((prop) => prop.name === 'specifyVariables');
+		expect(
+			((specifyVariables?.options ?? []) as INodePropertyOptions[]).map((option) => option.value),
+		).toEqual(['keypair', 'json']);
+
+		// The 0.3.0 name/value collection and its loadOptions handler are gone from
+		// the Movie resource. Template → Duplicate keeps its own `variablesUi`: it
+		// bakes values into a copy of someone else's template and is out of scope.
+		const movieVariableCollections = properties.filter(
+			(prop) =>
+				prop.name === 'variablesUi' &&
+				(prop.displayOptions?.show?.resource as string[] | undefined)?.includes('movie'),
+		);
+		expect(movieVariableCollections).toEqual([]);
+		expect(Object.keys(node.methods?.loadOptions ?? {})).not.toContain('getTemplateVariables');
 	});
 
 	it('pairs every Return All toggle with a Limit', () => {

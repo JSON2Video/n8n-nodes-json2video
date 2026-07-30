@@ -3,7 +3,18 @@
 	"nodeVersion": "1.0",
 	"codexVersion": "1.0",
 	"categories": ["Marketing", "Miscellaneous"],
-	"alias": ["Video", "Render", "Movie", "Template", "MP4", "Text to Video", "Media", "JSON2Video"],
+	"alias": [
+		"Video",
+		"Render",
+		"Movie",
+		"Template",
+		"MP4",
+		"Text to Video",
+		"Storage",
+		"Drive",
+		"Media",
+		"JSON2Video"
+	],
 	"resources": {
 		"credentialDocumentation": [
 			{

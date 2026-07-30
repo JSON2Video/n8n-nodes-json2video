@@ -23,6 +23,11 @@ The shortest useful workflow: fill a template's variables, wait for the render,
 and read `url`, `duration` (seconds) and `size` (bytes) off the output. Start
 here.
 
+The **Variables** section arrives with an empty field list on purpose: open the
+node and the variables of *your* template load themselves, one labelled input
+each. The values in the file (`quote_text`, `background_image`) are the ones the
+template used here — rename them to match yours.
+
 ### [`02-rss-to-social-reel.json`](./02-rss-to-social-reel.json)
 
 Schedule Trigger → RSS Feed Read → Limit → **Movie: Render and Wait** → Set.
@@ -34,7 +39,7 @@ and comes back on the output item.
 
 ### [`03-upload-asset-and-render.json`](./03-upload-asset-and-render.json)
 
-Manual Trigger → HTTP Request → **Media: Upload File** → **Movie: Render and Wait**.
+Manual Trigger → HTTP Request → **Storage: Upload File** → **Movie: Render and Wait**.
 
 Downloads a file, uploads it to the JSON2Video Drive, and drops the returned
 `url` straight into an element's `src`. The upload output is the bridge: `url`

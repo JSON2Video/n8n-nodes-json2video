@@ -20,13 +20,13 @@
 					"mode": "id"
 				},
 				"specifyVariables": "keypair",
-				"variablesUi": {
-					"variable": [
-						{
-							"name": "headline",
-							"value": "Summer sale"
-						}
-					]
+				"variables": {
+					"mappingMode": "defineBelow",
+					"value": {
+						"headline": "Summer sale"
+					},
+					"matchingColumns": [],
+					"schema": []
 				},
 				"additionalOptions": {
 					"resolution": "full-hd",

@@ -24,16 +24,16 @@ import {
 	getMediaFiles,
 	getMediaFolders,
 	getTemplateTags,
-	getTemplateVariables,
 } from './methods/loadOptions';
 import { searchLibraryTemplates, searchTemplates } from './methods/listSearch';
+import { getTemplateVariableFields } from './methods/resourceMapping';
 
 // This node uses the programmatic style (an `execute` method) because the
 // "Render and Wait" operation creates a movie and then polls the API until the
 // render reaches a terminal status, with backoff and retry rules that the
 // declarative request/response mapping cannot express.
 //
-// Layout, so Media (Phase 6) slots in without churn:
+// Layout, so Storage (Phase 6) slots in without churn:
 //   descriptions/  UI parameter definitions, one file per resource
 //   actions/       one folder per resource, one file per operation
 //   transport/     the shared authenticated request helper
@@ -50,7 +50,7 @@ export class Json2Video implements INodeType {
 		// This string is the tool description an n8n AI Agent reads before it
 		// decides to call the node, so it names the three resources explicitly.
 		description:
-			'Create and render videos with JSON2Video. Render a Movie JSON document or a saved template, check render status, manage templates, and upload media files to the account Drive.',
+			'Create and render videos with JSON2Video. Render a Movie JSON document or a saved template, check render status, manage templates, and upload files to the account Drive with the Storage operations.',
 		defaults: {
 			name: 'JSON2Video',
 		},
@@ -71,7 +71,7 @@ export class Json2Video implements INodeType {
 				noDataExpression: true,
 				// Deliberately not alphabetical: the resource order decides the order of
 				// the actions list in the nodes panel, and Movie is the reason people
-				// install this node — rendering a video. Template and Media support it.
+				// install this node — rendering a video. Template and Storage support it.
 				// n8n's own first-party nodes order resources by importance the same way.
 				options: [
 					{
@@ -83,7 +83,12 @@ export class Json2Video implements INodeType {
 						value: 'template',
 					},
 					{
-						name: 'Media',
+						// The label is "Storage" but the value stays `media`, on purpose.
+						// The value matches the `/v2/media/*` endpoints it calls, and it is
+						// what the workflows in `examples/` already carry — renaming it
+						// would silently break every saved workflow for a cosmetic change.
+						// Everything the user reads says Storage or Drive.
+						name: 'Storage',
 						value: 'media',
 					},
 				],
@@ -108,7 +113,9 @@ export class Json2Video implements INodeType {
 			getMediaFiles,
 			getMediaFolders,
 			getTemplateTags,
-			getTemplateVariables,
+		},
+		resourceMapping: {
+			getTemplateVariableFields,
 		},
 	};
 

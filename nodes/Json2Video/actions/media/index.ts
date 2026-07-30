@@ -25,7 +25,7 @@ const operations = {
 
 export type MediaOperation = keyof typeof operations;
 
-/** Routes one input item to the Media operation the user selected. */
+/** Routes one input item to the Storage operation the user selected. */
 export async function executeMediaOperation(
 	this: IExecuteFunctions,
 	operation: string,
@@ -36,7 +36,7 @@ export async function executeMediaOperation(
 	if (handler === undefined) {
 		throw new NodeOperationError(
 			this.getNode(),
-			`The operation "${operation}" is not supported for the Media resource`,
+			`The operation "${operation}" is not supported for the Storage resource`,
 			{ itemIndex },
 		);
 	}

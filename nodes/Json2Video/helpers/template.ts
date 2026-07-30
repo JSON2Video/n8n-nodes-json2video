@@ -1,4 +1,9 @@
-import type { IDataObject, INodePropertyOptions } from 'n8n-workflow';
+import type {
+	FieldType,
+	IDataObject,
+	INodePropertyOptions,
+	ResourceMapperField,
+} from 'n8n-workflow';
 
 // Pure helpers that turn n8n parameter values into JSON2Video Template
 // request bodies, and shape Template responses. No n8n runtime is touched
@@ -132,7 +137,7 @@ export function extractTemplateId(value: unknown): string {
  * because the Make.com app needs them as module fields. They are not part of
  * the user's template, and the n8n node already covers both with first-class
  * parameters (Additional Options → Webhook URL and → Client Data), so they are
- * filtered out of the Variables dropdown.
+ * filtered out of the Variables mapper.
  *
  * Filtered by exact name on purpose, never by the `advanced` flag they happen
  * to carry: a real template variable may legitimately be advanced, and hiding
@@ -140,11 +145,35 @@ export function extractTemplateId(value: unknown): string {
  */
 export const PLATFORM_INJECTED_VARIABLES = ['make_webhook_url', 'client_data'];
 
-/** Variable types whose value has to be written as JSON, listed last. */
-const NESTED_VARIABLE_TYPES = ['array', 'collection'];
+/**
+ * `format=make` variable `type` → n8n `FieldType`, which is what decides the
+ * input widget the resourceMapper renders for the variable:
+ *
+ * | Template type | FieldType  | Widget                  |
+ * |---------------|------------|-------------------------|
+ * | `text`        | `string`   | text box                |
+ * | `number`      | `number`   | numeric box             |
+ * | `select`      | `options`  | dropdown of `options`   |
+ * | `boolean`     | `boolean`  | toggle                  |
+ * | `array`       | `array`    | JSON editor             |
+ * | `collection`  | `object`   | JSON editor             |
+ *
+ * The type set is **open** — `format=make` is undocumented and gains types
+ * (`url` already exists in the wild). Anything unrecognised falls back to
+ * `string`, so a new type shows up as a plain text box instead of the variable
+ * disappearing from the form.
+ */
+const VARIABLE_FIELD_TYPES: Record<string, FieldType> = {
+	text: 'string',
+	number: 'number',
+	select: 'options',
+	boolean: 'boolean',
+	array: 'array',
+	collection: 'object',
+};
 
-/** Longest default value echoed into a dropdown description. */
-const MAX_DEFAULT_PREVIEW = 60;
+/** `mappingMode` value n8n's resourceMapper uses for "map automatically". */
+const AUTO_MAP_INPUT_DATA = 'autoMapInputData';
 
 function readString(value: unknown): string {
 	return typeof value === 'string' ? value.trim() : '';
@@ -156,104 +185,177 @@ function readObjects(value: unknown): IDataObject[] {
 		: [];
 }
 
-/** Ends a sentence fragment coming from the API with a full stop. */
-function asSentence(text: string): string {
-	return /[.!?]$/.test(text) ? text : `${text}.`;
+/** Never drops a variable: an unknown or missing type becomes a text box. */
+export function templateVariableFieldType(type: unknown): FieldType {
+	return VARIABLE_FIELD_TYPES[readString(type)] ?? 'string';
 }
 
 /**
- * The Make-shaped payload stringifies every default, so a nested variable's
- * default arrives as `"[object Object]"` or a comma-separated list of them.
- * Those carry no information and must not reach the UI.
+ * `format=make` stringifies **every** default, so a number's default arrives as
+ * `"600"` and a boolean's as `"false"`. `ResourceMapperField.defaultValue` is
+ * typed and pre-fills a typed widget, so those have to be coerced back or the
+ * numeric box shows a string and the toggle reads `"false"` as truthy.
+ *
+ * Nested defaults are stringified objects (`"[object Object]"`, or a
+ * comma-separated run of them) and carry no information at all — dropped.
  */
-function formatDefault(value: unknown): string | undefined {
-	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-	if (typeof value !== 'string') return undefined;
+export function coerceVariableDefault(
+	value: unknown,
+	type: FieldType,
+): string | number | boolean | undefined {
+	// `array`/`collection` render a JSON editor; their stringified default is junk.
+	if (type === 'array' || type === 'object') return undefined;
 
-	const trimmed = value.trim();
-	if (trimmed === '' || trimmed.includes('[object Object]')) return undefined;
-
-	const preview =
-		trimmed.length > MAX_DEFAULT_PREVIEW
-			? `${trimmed.slice(0, MAX_DEFAULT_PREVIEW).trimEnd()}…`
-			: trimmed;
-
-	return `"${preview}"`;
-}
-
-/**
- * The `description` line under one entry of the Variables dropdown: what type
- * the template expects, what the template's own default is, and the template
- * author's help text. `select` lists its allowed values; `array` and
- * `collection` say the value must be JSON and name their sub-fields, because
- * the key/value UI can only send text and those need the JSON mode.
- */
-function describeTemplateVariable(variable: IDataObject): string {
-	const type = readString(variable.type);
-	const sentences: string[] = [];
-
-	if (type === 'select') {
-		const values = readObjects(variable.options)
-			.map((option) => readString(option.value))
-			.filter((value) => value !== '');
-
-		sentences.push(
-			values.length > 0 ? `Type: select. Allowed values: ${values.join(', ')}.` : 'Type: select.',
-		);
-	} else if (NESTED_VARIABLE_TYPES.includes(type)) {
-		const fields = readObjects(variable.spec)
-			.map((field) => readString(field.name))
-			.filter((name) => name !== '');
-
-		sentences.push(`Type: ${type} — the value must be JSON.`);
-		if (fields.length > 0) sentences.push(`Sub-fields: ${fields.join(', ')}.`);
-	} else {
-		sentences.push(`Type: ${type === '' ? 'unknown' : type}.`);
+	if (type === 'number') {
+		if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+		const text = readString(value);
+		if (text === '') return undefined;
+		const parsed = Number(text);
+		return Number.isFinite(parsed) ? parsed : undefined;
 	}
 
-	const defaultValue = formatDefault(variable.default);
-	if (defaultValue !== undefined) sentences.push(`Default: ${defaultValue}.`);
+	if (type === 'boolean') {
+		if (typeof value === 'boolean') return value;
+		const text = readString(value).toLowerCase();
+		if (text === 'true') return true;
+		if (text === 'false') return false;
+		return undefined;
+	}
 
-	const help = readString(variable.help);
-	if (help !== '') sentences.push(asSentence(help));
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
 
-	return sentences.join(' ');
+	const text = readString(value);
+	if (text === '' || text.includes('[object Object]')) return undefined;
+	return text;
 }
 
 /**
- * "Template Variable" dropdown (Appendix C), built from the `variables` array of
+ * `select` variables carry their choices as `{ label, value }`; n8n wants
+ * `{ name, value }`. `value` is what has to be sent to the API, so an entry
+ * without a usable one is skipped.
+ */
+export function buildVariableSelectOptions(options: unknown): INodePropertyOptions[] {
+	const result: INodePropertyOptions[] = [];
+
+	for (const option of readObjects(options)) {
+		const raw = option.value;
+		if (typeof raw !== 'string' && typeof raw !== 'number') continue;
+
+		const value = typeof raw === 'number' ? String(raw) : raw.trim();
+		const label = readString(option.label);
+		if (label === '' && value === '') continue;
+
+		result.push({ name: label === '' ? value : label, value });
+	}
+
+	return result;
+}
+
+/**
+ * The `resourceMapper` field list for the Variables section of Movie → Create
+ * and Movie → Render and Wait, built from the `variables` array of
  * `GET /templates?id=<id>&format=make`.
  *
- * The label carries both the human label and the raw name, so either one finds
- * the entry when typing; the value is always the raw name, which is what
- * `variables` keys must be called on `POST /movies`.
+ * One field per template variable, so the parameter panel renders a labelled
+ * input per `{{placeholder}}` instead of a name/value list. `id` is the raw
+ * variable name — the key `variables` must use on `POST /movies` — and
+ * `displayName` is the template author's own label.
  *
- * Scalar variables come first and JSON-only ones (`array`, `collection`) last:
- * the fields below can only send text, so a nested variable is a signal to
- * switch *Specify Variables* to `Using JSON`.
+ * The template's declared order is preserved: it is the order the template
+ * author chose, and every type now has a working widget, so there is no reason
+ * to demote the nested ones the way the 0.3.0 dropdown did.
  */
-export function buildTemplateVariableOptions(variables: unknown): INodePropertyOptions[] {
-	const entries: Array<{ option: INodePropertyOptions; nested: boolean }> = [];
+export function buildTemplateVariableFields(variables: unknown): ResourceMapperField[] {
+	const fields: ResourceMapperField[] = [];
 
 	for (const variable of readObjects(variables)) {
-		const name = readString(variable.name);
-		if (name === '' || PLATFORM_INJECTED_VARIABLES.includes(name)) continue;
+		const id = readString(variable.name);
+		if (id === '' || PLATFORM_INJECTED_VARIABLES.includes(id)) continue;
 
 		const label = readString(variable.label);
+		let type = templateVariableFieldType(variable.type);
+		const options = type === 'options' ? buildVariableSelectOptions(variable.options) : [];
 
-		entries.push({
-			option: {
-				name: label === '' || label === name ? name : `${label} (${name})`,
-				value: name,
-				description: describeTemplateVariable(variable),
-			},
-			nested: NESTED_VARIABLE_TYPES.includes(readString(variable.type)),
-		});
+		// A dropdown with no choices cannot be filled in at all; fall back to a
+		// text box so the variable stays usable.
+		if (type === 'options' && options.length === 0) type = 'string';
+
+		const field: ResourceMapperField = {
+			id,
+			displayName: label === '' ? id : label,
+			// `format=make` marks a variable required only very rarely (2 of 628
+			// across the account sampled on 2026-07-30), but when it does, honour it:
+			// a required field cannot be removed from the form.
+			required: variable.required === true,
+			// There is no record-matching concept here — the node always sends the
+			// whole `variables` object and never looks an existing record up — so no
+			// variable is a match candidate and none is pre-selected as one.
+			defaultMatch: false,
+			canBeUsedToMatch: false,
+			display: true,
+			removed: false,
+			type,
+		};
+
+		if (type === 'options') field.options = options;
+
+		const defaultValue = coerceVariableDefault(variable.default, type);
+		if (defaultValue !== undefined) field.defaultValue = defaultValue;
+
+		fields.push(field);
 	}
 
-	// Stable: scalars keep the template's own order, and so do nested ones.
-	return [
-		...entries.filter((entry) => !entry.nested),
-		...entries.filter((entry) => entry.nested),
-	].map((entry) => entry.option);
+	return fields;
+}
+
+/**
+ * Turns the runtime value of the Variables `resourceMapper` parameter into the
+ * plain `variables` object `POST /movies` expects. The wire format is unchanged
+ * from 0.3.0 — only the UI that produces it is different.
+ *
+ * `getNodeParameter` returns `{ mappingMode, value, matchingColumns, schema }`.
+ * Both mapping modes are handled:
+ *
+ * - `defineBelow` — the user filled the fields in, so `value` is already the
+ *   object to send.
+ * - `autoMapInputData` — take the incoming item's own JSON keys whose names
+ *   match a field in the fetched schema, which is what "map automatically"
+ *   means everywhere else in n8n.
+ *
+ * `null` is n8n's "field left empty" marker (the editor prunes empty values to
+ * `null`), so nulls are skipped rather than sent as a null variable.
+ */
+export function extractMappedVariables(parameter: unknown, inputJson: unknown): IDataObject {
+	const variables: IDataObject = {};
+	if (typeof parameter !== 'object' || parameter === null) return variables;
+
+	const mapper = parameter as IDataObject;
+
+	if (readString(mapper.mappingMode) === AUTO_MAP_INPUT_DATA) {
+		if (typeof inputJson !== 'object' || inputJson === null || Array.isArray(inputJson)) {
+			return variables;
+		}
+		const item = inputJson as IDataObject;
+
+		for (const field of readObjects(mapper.schema)) {
+			const id = readString(field.id);
+			if (id === '' || field.display === false) continue;
+
+			const value = item[id];
+			if (value === undefined || value === null) continue;
+			variables[id] = value;
+		}
+
+		return variables;
+	}
+
+	if (typeof mapper.value !== 'object' || mapper.value === null) return variables;
+
+	for (const [name, value] of Object.entries(mapper.value as IDataObject)) {
+		const key = name.trim();
+		if (key === '' || value === undefined || value === null) continue;
+		variables[key] = value;
+	}
+
+	return variables;
 }

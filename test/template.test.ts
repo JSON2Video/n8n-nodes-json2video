@@ -4,11 +4,15 @@ import {
 	applyClientSideLimit,
 	buildDeleteTemplateResponse,
 	buildTemplateBody,
-	buildTemplateVariableOptions,
+	buildTemplateVariableFields,
+	buildVariableSelectOptions,
+	coerceVariableDefault,
 	collectSortedTags,
+	extractMappedVariables,
 	extractTemplateId,
 	parseTagsParameter,
 	templateHasTag,
+	templateVariableFieldType,
 	withDualTemplateId,
 } from '../nodes/Json2Video/helpers/template';
 
@@ -195,52 +199,175 @@ describe('extractTemplateId', () => {
 });
 
 // Shape of `GET /templates?id=<id>&format=make` → `template.variables`, verified
-// live against 20 real templates on 2026-07-30.
-describe('buildTemplateVariableOptions', () => {
-	it('labels an option with the human label plus the raw name, and values it with the raw name', () => {
+// live against 101 real templates (628 variables) on 2026-07-30.
+describe('templateVariableFieldType', () => {
+	it('maps every type the API is known to emit onto an n8n FieldType', () => {
+		expect(templateVariableFieldType('text')).toBe('string');
+		expect(templateVariableFieldType('number')).toBe('number');
+		expect(templateVariableFieldType('select')).toBe('options');
+		expect(templateVariableFieldType('boolean')).toBe('boolean');
+		expect(templateVariableFieldType('array')).toBe('array');
+		expect(templateVariableFieldType('collection')).toBe('object');
+	});
+
+	it('falls back to string for an unknown or missing type, never dropping the variable', () => {
+		// `url` really is returned by the live API and is not in the mapping table.
+		expect(templateVariableFieldType('url')).toBe('string');
+		expect(templateVariableFieldType('colorpicker')).toBe('string');
+		expect(templateVariableFieldType(undefined)).toBe('string');
+		expect(templateVariableFieldType(42)).toBe('string');
+		expect(templateVariableFieldType('')).toBe('string');
+	});
+});
+
+describe('coerceVariableDefault', () => {
+	it('turns the stringified numeric default back into a number', () => {
+		// `format=make` stringifies every default, so 600 arrives as "600".
+		expect(coerceVariableDefault('600', 'number')).toBe(600);
+		expect(coerceVariableDefault('76.5', 'number')).toBe(76.5);
+		expect(coerceVariableDefault('0', 'number')).toBe(0);
+		expect(coerceVariableDefault(600, 'number')).toBe(600);
+	});
+
+	it('omits a numeric default that is not a number', () => {
+		expect(coerceVariableDefault('', 'number')).toBeUndefined();
+		expect(coerceVariableDefault('   ', 'number')).toBeUndefined();
+		expect(coerceVariableDefault('auto', 'number')).toBeUndefined();
+		expect(coerceVariableDefault(Number.NaN, 'number')).toBeUndefined();
+	});
+
+	it('turns the stringified boolean default back into a boolean', () => {
+		// "false" is a truthy string: left alone it would switch the toggle on.
+		expect(coerceVariableDefault('false', 'boolean')).toBe(false);
+		expect(coerceVariableDefault('true', 'boolean')).toBe(true);
+		expect(coerceVariableDefault('TRUE', 'boolean')).toBe(true);
+		expect(coerceVariableDefault(false, 'boolean')).toBe(false);
+		expect(coerceVariableDefault('yes', 'boolean')).toBeUndefined();
+	});
+
+	it('keeps a text default as text and drops an empty one', () => {
+		expect(coerceVariableDefault('This is my quote today', 'string')).toBe('This is my quote today');
+		expect(coerceVariableDefault('  ', 'string')).toBeUndefined();
+		expect(coerceVariableDefault(undefined, 'string')).toBeUndefined();
+	});
+
+	it('drops the stringified object defaults the Make payload produces', () => {
+		expect(coerceVariableDefault('[object Object]', 'string')).toBeUndefined();
+		expect(coerceVariableDefault('[object Object],[object Object]', 'string')).toBeUndefined();
+	});
+
+	it('never pre-fills a JSON editor, whatever the payload says', () => {
+		expect(coerceVariableDefault('[object Object]', 'object')).toBeUndefined();
+		expect(coerceVariableDefault('anything', 'array')).toBeUndefined();
+	});
+});
+
+describe('buildVariableSelectOptions', () => {
+	it('rewrites { label, value } into n8n { name, value }', () => {
 		expect(
-			buildTemplateVariableOptions([
+			buildVariableSelectOptions([
+				{ label: 'Test (image slideshow)', value: 'slideshow' },
+				{ label: 'Final video (avatar video)', value: 'video' },
+			]),
+		).toEqual([
+			{ name: 'Test (image slideshow)', value: 'slideshow' },
+			{ name: 'Final video (avatar video)', value: 'video' },
+		]);
+	});
+
+	it('keeps numeric-looking values as the strings the API sends', () => {
+		// Real template: volume presets whose values are "0", "0.05", "1".
+		expect(
+			buildVariableSelectOptions([
+				{ label: 'Muted', value: '0' },
+				{ label: 'Normal', value: '1' },
+			]),
+		).toEqual([
+			{ name: 'Muted', value: '0' },
+			{ name: 'Normal', value: '1' },
+		]);
+	});
+
+	it('falls back to the value when there is no label, and skips unusable entries', () => {
+		expect(
+			buildVariableSelectOptions([
+				{ value: 'slideshow' },
+				{ label: 'No value here' },
+				{ label: '', value: '' },
+				'not an object',
+			]),
+		).toEqual([{ name: 'slideshow', value: 'slideshow' }]);
+	});
+
+	it('returns an empty list for a malformed payload', () => {
+		expect(buildVariableSelectOptions(undefined)).toEqual([]);
+		expect(buildVariableSelectOptions('nope')).toEqual([]);
+	});
+});
+
+describe('buildTemplateVariableFields', () => {
+	it('renders one field per variable, labelled by the template and keyed by the raw name', () => {
+		expect(
+			buildTemplateVariableFields([
 				{ name: 'quote', label: 'Quote', type: 'text', default: 'This is my quote today' },
+				{ name: 'author', label: 'Author', type: 'text', default: 'John Doe' },
 			]),
 		).toEqual([
 			{
-				name: 'Quote (quote)',
-				value: 'quote',
-				description: 'Type: text. Default: "This is my quote today".',
+				id: 'quote',
+				displayName: 'Quote',
+				required: false,
+				defaultMatch: false,
+				canBeUsedToMatch: false,
+				display: true,
+				removed: false,
+				type: 'string',
+				defaultValue: 'This is my quote today',
+			},
+			{
+				id: 'author',
+				displayName: 'Author',
+				required: false,
+				defaultMatch: false,
+				canBeUsedToMatch: false,
+				display: true,
+				removed: false,
+				type: 'string',
+				defaultValue: 'John Doe',
 			},
 		]);
 	});
 
-	it('falls back to the raw name when there is no label, or the label repeats it', () => {
-		const options = buildTemplateVariableOptions([
+	it('falls back to the raw name when the template has no label', () => {
+		const fields = buildTemplateVariableFields([
 			{ name: 'headline', type: 'text' },
 			{ name: 'price', label: '  ', type: 'number' },
-			{ name: 'subtitle', label: 'subtitle', type: 'text' },
 		]);
 
-		expect(options.map((option) => option.name)).toEqual(['headline', 'price', 'subtitle']);
+		expect(fields.map((field) => field.displayName)).toEqual(['headline', 'price']);
+		expect(fields.map((field) => field.id)).toEqual(['headline', 'price']);
 	});
 
 	it('drops the two Make.com variables the API injects into every template', () => {
-		const options = buildTemplateVariableOptions([
+		const fields = buildTemplateVariableFields([
 			{ name: 'make_webhook_url', advanced: true, type: 'text', label: 'Webhook URL' },
 			{ name: 'quote', label: 'Quote', type: 'text' },
 			{ name: 'client_data', advanced: true, type: 'array', label: 'Client data', spec: [] },
 		]);
 
-		expect(options.map((option) => option.value)).toEqual(['quote']);
+		expect(fields.map((field) => field.id)).toEqual(['quote']);
 	});
 
 	it('keeps a real template variable that happens to be advanced', () => {
-		const options = buildTemplateVariableOptions([
+		const fields = buildTemplateVariableFields([
 			{ name: 'debugMode', label: 'Debug Mode', advanced: true, type: 'text' },
 		]);
 
-		expect(options.map((option) => option.value)).toEqual(['debugMode']);
+		expect(fields.map((field) => field.id)).toEqual(['debugMode']);
 	});
 
-	it('lists the allowed values of a select variable', () => {
-		const [option] = buildTemplateVariableOptions([
+	it('turns a select variable into a dropdown carrying its allowed values', () => {
+		const [field] = buildTemplateVariableFields([
 			{
 				name: 'renderMode',
 				label: 'Render Mode',
@@ -255,14 +382,26 @@ describe('buildTemplateVariableOptions', () => {
 			},
 		]);
 
-		expect(option.name).toBe('Render Mode (renderMode)');
-		expect(option.description).toBe(
-			'Type: select. Allowed values: slideshow, video. Default: "video".',
-		);
+		expect(field.type).toBe('options');
+		expect(field.options).toEqual([
+			{ name: 'Test (image slideshow)', value: 'slideshow' },
+			{ name: 'Final video (avatar video)', value: 'video' },
+		]);
+		expect(field.defaultValue).toBe('video');
 	});
 
-	it('says a nested variable needs JSON and names its sub-fields', () => {
-		const [scenes, voice] = buildTemplateVariableOptions([
+	it('degrades a select with no usable choices to a text box', () => {
+		const [field] = buildTemplateVariableFields([
+			{ name: 'broken', label: 'Broken', type: 'select', options: [], default: 'x' },
+		]);
+
+		expect(field.type).toBe('string');
+		expect(field.options).toBeUndefined();
+		expect(field.defaultValue).toBe('x');
+	});
+
+	it('gives array and collection variables a JSON editor and no junk default', () => {
+		const [scenes, voice] = buildTemplateVariableFields([
 			{
 				name: 'scenes',
 				label: 'Scenes',
@@ -279,82 +418,179 @@ describe('buildTemplateVariableOptions', () => {
 				name: 'voice1',
 				label: 'Voice1',
 				type: 'collection',
-				spec: [{ name: 'enabled', type: 'boolean' }, { name: 'model', type: 'text' }],
+				spec: [{ name: 'model', type: 'text' }],
 				default: '[object Object]',
 			},
 		]);
 
-		expect(scenes.description).toBe(
-			'Type: array — the value must be JSON. Sub-fields: layoutStyle, voiceoverText. Organize the content of your reel in scenes.',
-		);
-		expect(voice.description).toBe(
-			'Type: collection — the value must be JSON. Sub-fields: enabled, model.',
-		);
+		expect(scenes.type).toBe('array');
+		expect(scenes.displayName).toBe('Scenes');
+		expect(scenes.defaultValue).toBeUndefined();
+		expect(voice.type).toBe('object');
+		expect(voice.defaultValue).toBeUndefined();
 	});
 
-	it('sorts scalar variables first and JSON-only ones last, keeping template order inside each group', () => {
-		const options = buildTemplateVariableOptions([
-			{ name: 'scenes', type: 'array' },
-			{ name: 'quote', type: 'text' },
-			{ name: 'voice1', type: 'collection' },
-			{ name: 'titleWeight', type: 'number' },
-			{ name: 'textTransform', type: 'select' },
+	it('coerces the stringified defaults of number and boolean variables', () => {
+		const [weight, flip] = buildTemplateVariableFields([
+			{ name: 'titleWeight', label: 'Title Weight', type: 'number', default: '600' },
+			{ name: 'flip_horizontally', label: 'Flip Horizontally', type: 'boolean', default: 'false' },
 		]);
 
-		expect(options.map((option) => option.value)).toEqual([
-			'quote',
-			'titleWeight',
-			'textTransform',
-			'scenes',
-			'voice1',
-		]);
+		expect(weight.type).toBe('number');
+		expect(weight.defaultValue).toBe(600);
+		expect(flip.type).toBe('boolean');
+		expect(flip.defaultValue).toBe(false);
 	});
 
-	it('handles an unknown or missing type without hiding the variable', () => {
-		const options = buildTemplateVariableOptions([
+	it('keeps an unknown type visible as a text box', () => {
+		const fields = buildTemplateVariableFields([
+			{ name: 'video_URL', label: 'Video URL', type: 'url', default: '' },
 			{ name: 'brandColor', label: 'Brand Color', type: 'colorpicker' },
 			{ name: 'mystery', label: 'Mystery' },
 		]);
 
-		expect(options).toEqual([
-			{ name: 'Brand Color (brandColor)', value: 'brandColor', description: 'Type: colorpicker.' },
-			{ name: 'Mystery (mystery)', value: 'mystery', description: 'Type: unknown.' },
-		]);
+		expect(fields.map((field) => field.id)).toEqual(['video_URL', 'brandColor', 'mystery']);
+		expect(fields.every((field) => field.type === 'string')).toBe(true);
 	});
 
-	it('appends the template author help text as a sentence', () => {
-		const [withStop, withoutStop] = buildTemplateVariableOptions([
-			{ name: 'a', type: 'text', help: 'Already a sentence.' },
-			{ name: 'b', type: 'text', help: 'No full stop here' },
+	it('honours the rare required flag and leaves everything else optional', () => {
+		const [video, audio] = buildTemplateVariableFields([
+			{ name: 'video_URL', label: 'Video URL', type: 'url', required: true, default: '' },
+			{ name: 'audio_URL', label: 'Audio URL', type: 'url', default: '' },
 		]);
 
-		expect(withStop.description).toBe('Type: text. Already a sentence.');
-		expect(withoutStop.description).toBe('Type: text. No full stop here.');
+		expect(video.required).toBe(true);
+		expect(audio.required).toBe(false);
 	});
 
-	it('truncates a very long default and keeps numbers and booleans readable', () => {
-		const [long, number, boolean] = buildTemplateVariableOptions([
-			{ name: 'imagePrompt', type: 'text', default: 'x'.repeat(200) },
-			{ name: 'weight', type: 'number', default: 600 },
-			{ name: 'enabled', type: 'boolean', default: false },
+	it('never marks a variable as a matching column: there is no record to match', () => {
+		const fields = buildTemplateVariableFields([
+			{ name: 'quote', label: 'Quote', type: 'text' },
+			{ name: 'scenes', label: 'Scenes', type: 'array' },
 		]);
 
-		expect(long.description).toBe(`Type: text. Default: "${'x'.repeat(60)}…".`);
-		// Numbers and booleans are printed unquoted, so a default of 600 does not
-		// read as the string "600".
-		expect(number.description).toBe('Type: number. Default: 600.');
-		expect(boolean.description).toBe('Type: boolean. Default: false.');
+		for (const field of fields) {
+			expect(field.defaultMatch).toBe(false);
+			expect(field.canBeUsedToMatch).toBe(false);
+			expect(field.display).toBe(true);
+			expect(field.removed).toBe(false);
+		}
 	});
 
-	it('omits an empty default rather than printing empty quotes', () => {
-		const [option] = buildTemplateVariableOptions([{ name: 'quote', type: 'text', default: '  ' }]);
-		expect(option.description).toBe('Type: text.');
+	it("keeps the template's own declared order, nested variables included", () => {
+		// 0.3.0's dropdown pushed array/collection entries to the bottom because the
+		// key/value UI could not send JSON. Every type now has a working widget, so
+		// the author's order is what the form shows.
+		const fields = buildTemplateVariableFields([
+			{ name: 'scenes', type: 'array' },
+			{ name: 'quote', type: 'text' },
+			{ name: 'voice1', type: 'collection' },
+			{ name: 'titleWeight', type: 'number' },
+			{ name: 'textTransform', type: 'select', options: [{ label: 'Up', value: 'uppercase' }] },
+		]);
+
+		expect(fields.map((field) => field.id)).toEqual([
+			'scenes',
+			'quote',
+			'voice1',
+			'titleWeight',
+			'textTransform',
+		]);
 	});
 
 	it('returns an empty list for a template with no variables or a malformed payload', () => {
-		expect(buildTemplateVariableOptions([])).toEqual([]);
-		expect(buildTemplateVariableOptions(undefined)).toEqual([]);
-		expect(buildTemplateVariableOptions('nope')).toEqual([]);
-		expect(buildTemplateVariableOptions([{ label: 'No name at all', type: 'text' }])).toEqual([]);
+		expect(buildTemplateVariableFields([])).toEqual([]);
+		expect(buildTemplateVariableFields(undefined)).toEqual([]);
+		expect(buildTemplateVariableFields('nope')).toEqual([]);
+		expect(buildTemplateVariableFields([{ label: 'No name at all', type: 'text' }])).toEqual([]);
+	});
+});
+
+describe('extractMappedVariables', () => {
+	const schema = [
+		{ id: 'quote', displayName: 'Quote', type: 'string', display: true },
+		{ id: 'author', displayName: 'Author', type: 'string', display: true },
+		{ id: 'titleWeight', displayName: 'Title Weight', type: 'number', display: true },
+	];
+
+	it('sends the values of the fields the user filled in (defineBelow)', () => {
+		expect(
+			extractMappedVariables(
+				{
+					mappingMode: 'defineBelow',
+					value: { quote: 'Ship it', author: 'Anon', titleWeight: 600 },
+					matchingColumns: [],
+					schema,
+				},
+				{},
+			),
+		).toEqual({ quote: 'Ship it', author: 'Anon', titleWeight: 600 });
+	});
+
+	it('preserves the types the typed widgets produce', () => {
+		expect(
+			extractMappedVariables(
+				{
+					mappingMode: 'defineBelow',
+					value: { titleWeight: 600, enabled: false, ratio: 0, blank: '' },
+					schema: [],
+				},
+				{},
+			),
+		).toEqual({ titleWeight: 600, enabled: false, ratio: 0, blank: '' });
+	});
+
+	it('skips fields left empty, which n8n represents as null', () => {
+		expect(
+			extractMappedVariables(
+				{ mappingMode: 'defineBelow', value: { quote: 'Ship it', author: null }, schema },
+				{},
+			),
+		).toEqual({ quote: 'Ship it' });
+	});
+
+	it('takes the matching keys of the incoming item (autoMapInputData)', () => {
+		expect(
+			extractMappedVariables(
+				{ mappingMode: 'autoMapInputData', value: null, matchingColumns: [], schema },
+				{ quote: 'From the item', titleWeight: 700, unrelated: 'ignored' },
+			),
+		).toEqual({ quote: 'From the item', titleWeight: 700 });
+	});
+
+	it('ignores schema fields the item does not carry, and null item values', () => {
+		expect(
+			extractMappedVariables(
+				{ mappingMode: 'autoMapInputData', value: null, schema },
+				{ quote: 'Only this one', author: null },
+			),
+		).toEqual({ quote: 'Only this one' });
+	});
+
+	it('sends nothing in autoMapInputData mode when the schema could not be loaded', () => {
+		// Without a schema there is nothing to match on, and guessing would turn
+		// every unrelated item field into a template variable.
+		expect(
+			extractMappedVariables(
+				{ mappingMode: 'autoMapInputData', value: null, schema: [] },
+				{ quote: 'Ship it' },
+			),
+		).toEqual({});
+	});
+
+	it('treats a missing mappingMode as defineBelow', () => {
+		expect(extractMappedVariables({ value: { quote: 'Ship it' } }, {})).toEqual({
+			quote: 'Ship it',
+		});
+	});
+
+	it('returns an empty object for an untouched or malformed parameter', () => {
+		expect(extractMappedVariables(undefined, {})).toEqual({});
+		expect(extractMappedVariables('nope', {})).toEqual({});
+		expect(extractMappedVariables({}, {})).toEqual({});
+		expect(extractMappedVariables({ mappingMode: 'defineBelow', value: null }, {})).toEqual({});
+		expect(
+			extractMappedVariables({ mappingMode: 'autoMapInputData', schema }, undefined),
+		).toEqual({});
 	});
 });

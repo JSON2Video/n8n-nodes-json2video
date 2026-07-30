@@ -1,11 +1,8 @@
 import type { IDataObject, IExecuteFunctions } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
-import {
-	applyMovieOptions,
-	keyValuePairsToObject,
-	parseJsonObjectParameter,
-} from '../../helpers/movie';
+import { applyMovieOptions, parseJsonObjectParameter } from '../../helpers/movie';
+import { extractMappedVariables } from '../../helpers/template';
 
 /**
  * Builds the `POST /v2/movies` request body from the node parameters. Shared by
@@ -58,9 +55,11 @@ export function buildMovieRequestBody(this: IExecuteFunctions, itemIndex: number
 				throw new NodeOperationError(this.getNode(), (error as Error).message, { itemIndex });
 			}
 		} else {
-			variables = keyValuePairsToObject(
-				this.getNodeParameter('variablesUi', itemIndex, {}),
-				'variable',
+			// The Variables resourceMapper. In "Map Automatically" mode the values
+			// come from the incoming item itself, so the item's JSON is needed too.
+			variables = extractMappedVariables(
+				this.getNodeParameter('variables', itemIndex, {}),
+				this.getInputData()[itemIndex]?.json,
 			);
 		}
 

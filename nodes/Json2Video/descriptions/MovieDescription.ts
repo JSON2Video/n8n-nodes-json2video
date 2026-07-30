@@ -155,19 +155,26 @@ const inputModeFields: INodeProperties[] = [
 				value: 'json',
 			},
 		],
+		// The `keypair` value predates the resourceMapper — 0.3.0 rendered
+		// name/value pairs here. It is kept as-is so a workflow saved with 0.3.0
+		// still lands on the fields UI after upgrading instead of losing it.
 		default: 'keypair',
 		description:
-			'How to provide the template variables. Values entered as fields are sent as text; use JSON for numbers, booleans, arrays or nested objects.',
+			'How to provide the template variables: one labelled input per variable the template declares, or one raw JSON object. Use JSON for values built by an expression, or to fill variables the template does not declare.',
 	},
 	{
 		displayName: 'Variables',
-		name: 'variablesUi',
-		type: 'fixedCollection',
-		typeOptions: {
-			multipleValues: true,
+		name: 'variables',
+		// One labelled input per template variable, typed from the template's own
+		// declaration — the primitive n8n built for dynamic schemas (Google Sheets
+		// columns, Postgres columns). `getTemplateVariableFields` is registered
+		// under `methods.resourceMapping` on the node.
+		type: 'resourceMapper',
+		noDataExpression: true,
+		default: {
+			mappingMode: 'defineBelow',
+			value: null,
 		},
-		placeholder: 'Add Variable',
-		default: {},
 		displayOptions: {
 			show: {
 				resource: ['movie'],
@@ -176,37 +183,34 @@ const inputModeFields: INodeProperties[] = [
 				specifyVariables: ['keypair'],
 			},
 		},
-		options: [
-			{
-				name: 'variable',
-				displayName: 'Variable',
-				values: [
-					{
-						displayName: 'Variable Name or ID',
-						name: 'name',
-						type: 'options',
-						typeOptions: {
-							loadOptionsMethod: 'getTemplateVariables',
-							// The dependency is the resource locator's inner value, not the
-							// locator object, so switching template reloads the list.
-							loadOptionsDependsOn: ['templateId.value'],
-						},
-						default: '',
-						hint: 'The list holds the variables the selected template declares, with their type and default. A name typed in or coming from an expression is sent as-is; letters, numbers and underscores only, any other character is silently replaced with an underscore. Variables that need a JSON value are listed last — switch Specify Variables to Using JSON for those.',
-						description:
-							'Variable of the template to fill, sent without the {{braces}}. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
-					},
-					{
-						displayName: 'Value',
-						name: 'value',
-						type: 'string',
-						default: '',
-						description: 'Value that replaces the placeholder. Always sent as text.',
-					},
-				],
+		typeOptions: {
+			// A resourceMapper refetches its field list from `loadOptionsDependsOn`,
+			// the same key a plain `options` dropdown uses — n8n's ResourceMapper
+			// watches the joined values and reloads when they change. A resource
+			// locator's dependency is its inner `.value`, not the locator object,
+			// or switching template would not reload the fields.
+			loadOptionsDependsOn: ['templateId.value'],
+			resourceMapper: {
+				resourceMapperMethod: 'getTemplateVariableFields',
+				// `add`: the node always sends the whole `variables` object and never
+				// matches an existing record, so there are no matching columns.
+				mode: 'add',
+				fieldWords: {
+					singular: 'variable',
+					plural: 'variables',
+				},
+				addAllFields: true,
+				multiKeyMatch: false,
+				// Offers "Map Automatically", which fills every variable from the
+				// incoming item's field of the same name.
+				supportAutoMap: true,
+				// The method explains an empty list itself (no template selected, no
+				// variables declared, load failed) through `emptyFieldsNotice`.
+				hideNoDataError: true,
 			},
-		],
-		description: 'Values for the {{placeholders}} inside the template, one entry per placeholder',
+		},
+		description:
+			'Values for the {{placeholders}} inside the template, one input per variable the template declares. Each input is typed and pre-filled from the template: text, number, dropdown, toggle, or a JSON editor for the array and object variables.',
 	},
 	{
 		displayName: 'Variables (JSON)',

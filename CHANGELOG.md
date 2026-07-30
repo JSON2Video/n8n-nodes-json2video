@@ -4,6 +4,43 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this package
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Template variables are now one labelled input per variable.** Pick a
+  template on Movie → Create or Movie → Render and Wait and the **Variables**
+  section renders itself from that template: one input per variable it declares,
+  labelled by the template author, typed the way the template declares it
+  (text box, numeric box, dropdown of allowed values, toggle, or a JSON editor
+  for `array` / `collection` variables) and pre-filled with the template's own
+  default. Changing the selected template reloads the list. This replaces the
+  0.3.0 name/value list whose **Name** side was a dropdown — that UI is gone.
+
+  Built on n8n's `resourceMapper` parameter, the same primitive Google Sheets
+  and Postgres use for their columns, which also brings a **Map Automatically**
+  mode: every variable is filled from the incoming item's field of the same
+  name. The raw-JSON mode (**Specify Variables → Using JSON**) is unchanged and
+  is still the escape hatch for expression-built objects and for variables the
+  template does not declare.
+
+  The request sent to the API is byte-for-byte what it was:
+  `{ "template": "<id>", "variables": { … } }`.
+
+- **The "Media" resource is now called "Storage".** The nodes panel lists
+  *Storage actions*, and the wording of every operation, hint and error follows.
+  Nothing else changes: the parameter value is still `media`, so saved workflows
+  and the examples in `examples/` keep working, and the operations still call
+  `/v2/media/*`.
+
+### Removed
+
+- The `getTemplateVariables` `loadOptions` handler and the `variablesUi`
+  name/value collection on the Movie resource, both superseded by the variable
+  mapper. Template → Duplicate keeps its own `variablesUi`: it bakes values into
+  a copy of a template that may not be yours, so there is no variable list to
+  load.
+
 ## [0.3.0] - 2026-07-30
 
 ### Added

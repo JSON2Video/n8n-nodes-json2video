@@ -19,7 +19,7 @@ export const PRESIGNED_URL_TTL_SECONDS = 120;
  * the next upload of the same name would be rejected with a 409.
  */
 export const UPLOAD_PENDING_HINT =
-	'The file was registered in your Drive but its bytes were never stored, so it is left in "pending" state. Delete it with Media → Delete File before retrying, otherwise the next upload of the same name fails with "A file with this name already exists".';
+	'The file was registered in your Drive but its bytes were never stored, so it is left in "pending" state. Delete it with Storage → Delete File before retrying, otherwise the next upload of the same name fails with "A file with this name already exists".';
 
 /**
  * Normalises a Drive path — a folder or a `folder/file` path — to the canonical
@@ -196,7 +196,7 @@ export function describeUploadRegistrationError(
 	message: string,
 ): string | undefined {
 	if (statusCode === 409 || /already exists/i.test(message)) {
-		return 'Delete the existing file with Media → Delete File first, or set a different name in Additional Options → File Name.';
+		return 'Delete the existing file with Storage → Delete File first, or set a different name in Additional Options → File Name.';
 	}
 
 	if (statusCode === 413) {
@@ -307,7 +307,7 @@ export function describeDeleteFolderError(
 	message: string,
 ): string | undefined {
 	if (/not empty/i.test(message)) {
-		return 'JSON2Video only deletes empty folders. Remove every file in it first — Media → List Folder shows what is left, and Media → Delete File removes them one by one.';
+		return 'JSON2Video only deletes empty folders. Remove every file in it first — Storage → List Folder shows what is left, and Storage → Delete File removes them one by one.';
 	}
 
 	if (/root folder/i.test(message)) {

@@ -1,9 +1,16 @@
 import type { INodeProperties } from 'n8n-workflow';
 
-// UI definition of the Media resource — the account's Drive. Every description
+// UI definition of the Storage resource — the account's Drive. Every description
 // below is the AI-agent prompt for that parameter as well as the human hint, so
 // units, formats and path semantics are always spelled out.
 // Contract: `integrations/shared/operations.md` → "Resource: Media" + Appendix C.
+//
+// Naming: everything the user reads says **Storage** (the resource label) or
+// **Drive** (our product name for the account's file area), while the parameter
+// value, the file names and the identifiers stay `media` — that is the
+// `/v2/media/*` path they call, and it is what the workflows in `examples/`
+// carry. The divergence is deliberate; see the `resource` options in
+// `Json2Video.node.ts`.
 //
 // Folder and file pickers are dynamic `options` parameters rather than free
 // text: `loadOptionsDependsOn` (the file list follows the selected folder) only

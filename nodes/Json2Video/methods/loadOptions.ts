@@ -1,11 +1,7 @@
 import type { IDataObject, ILoadOptionsFunctions, INodePropertyOptions } from 'n8n-workflow';
 
 import { buildFileOptions, buildFolderOptions, toListFolderPath } from '../helpers/media';
-import {
-	buildTemplateVariableOptions,
-	collectSortedTags,
-	extractTemplateId,
-} from '../helpers/template';
+import { collectSortedTags } from '../helpers/template';
 import { json2VideoApiRequest } from '../transport';
 
 /** Cap what a dropdown renders so a big Drive cannot freeze the parameter panel. */
@@ -32,45 +28,7 @@ export async function getTemplateTags(this: ILoadOptionsFunctions): Promise<INod
 }
 
 /**
- * "Template Variable" dropdown (Appendix C): the variables of the template
- * currently selected in the `templateId` resource locator
- * (`loadOptionsDependsOn: ['templateId.value']`), from
- * `GET /templates?id=<id>&format=make`.
- *
- * `format=make` is the only shape that returns typed variable descriptors
- * (name, label, type, default, help, select options, nested `spec`); the
- * default and `format=jsonschema` shapes do not. It is an internal format —
- * see `operations.md` → "Template — Get" and Appendix A.4.
- *
- * Degrades gracefully: no template selected yet, an expired key, a key whose
- * role is too low or a transient failure all return an empty list instead of
- * breaking the parameter panel. The field still accepts a name typed in
- * directly or supplied by an expression.
- */
-export async function getTemplateVariables(
-	this: ILoadOptionsFunctions,
-): Promise<INodePropertyOptions[]> {
-	try {
-		const templateId = extractTemplateId(this.getCurrentNodeParameter('templateId'));
-		if (templateId === '') return [];
-
-		const response = await json2VideoApiRequest.call(this, 'GET', '/templates', {
-			qs: { id: templateId, format: 'make' },
-		});
-
-		const template =
-			typeof response.template === 'object' && response.template !== null
-				? (response.template as IDataObject)
-				: {};
-
-		return buildTemplateVariableOptions(template.variables);
-	} catch {
-		return [];
-	}
-}
-
-/**
- * "Media Folder" dropdown (Appendix C): every folder in the Drive, from
+ * "Folder" dropdown (Appendix C, "Media Folder"): every folder in the Drive, from
  * `GET /media/folder?tree=true`, labelled with its file count.
  *
  * The root folder's value is the empty string — what every write endpoint
@@ -119,7 +77,7 @@ async function loadMediaFiles(
 }
 
 /**
- * "Media File" dropdown for Media: Get File — the value is the full
+ * "File" dropdown for Storage: Get File — the value is the full
  * `folder/name` path, because `GET /media/file` addresses files by `path`.
  */
 export async function getMediaFiles(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
@@ -127,7 +85,7 @@ export async function getMediaFiles(this: ILoadOptionsFunctions): Promise<INodeP
 }
 
 /**
- * "Media File" dropdown for Media: Move File and Media: Delete File — the value
+ * "File" dropdown for Storage: Move File and Storage: Delete File — the value
  * is the bare file name, because those endpoints take `name` plus a separate
  * `folder` (Appendix B / B12).
  */

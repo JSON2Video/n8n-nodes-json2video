@@ -62,9 +62,9 @@ Both Create and Render and Wait accept either a **saved template plus variables*
 | Update | Change the name, Movie JSON, tags or AI prompt of a template |
 | Delete | Delete a template |
 
-### Media
+### Storage
 
-Media operations work against the JSON2Video Drive, the file storage attached to the account.
+Storage operations work against the JSON2Video Drive, the file storage attached to the account. (The resource's internal parameter value is `media`, matching the `/v2/media/*` endpoints — only the label reads Storage.)
 
 | Operation | Description |
 | --- | --- |
@@ -102,11 +102,27 @@ Then configure the node:
 
 - **Resource**: Movie · **Operation**: Render and Wait
 - **Input Mode**: Template · **Template**: pick it from the list
-- **Variables**: `quote_text` → `{{ $json.quote }}`, `background_image` → `{{ $json.image_url }}`
+- **Variables**: one labelled input per variable, filled in below
 
-The **Name** field of each variable is a dropdown listing the variables the selected template actually declares, with each one's type, default value and the help text saved with the template. Names not in the list still work: type one in, or drive it from an expression.
+Pick a template and the **Variables** section renders itself from that template — one input per variable it declares, labelled and typed the way the template author defined it:
 
-Variables whose type is `array` or `collection` need a JSON value, which the fields cannot send — those are listed last, and for them switch **Specify Variables** to **Using JSON** and pass the whole object at once:
+```
+Quote text:       [ Ship it                        ]
+Background image: [ https://example.com/bg.jpg     ]
+Render mode:      [ Final video (avatar video)  ▾  ]
+Title weight:     [ 600                           ]
+Flip vertically:  [ off ]
+Scenes:           [ { "voiceoverText": "Hello" }   ]   (JSON editor)
+```
+
+Text variables get a text box, numbers a numeric box, `select` variables a dropdown of their allowed values, booleans a toggle, and `array` / `collection` variables a JSON editor. Each input is pre-filled with the template's own default, and every one of them accepts an expression, so `{{ $json.quote }}` works anywhere. Changing the selected template reloads the list.
+
+Two extra controls come with the section:
+
+- **Map Automatically** fills every variable from the incoming item's field of the same name — handy when an upstream Set node already produces `quote_text`, `background_image` and so on.
+- The **+ Add variable / refresh** menu re-reads the template if you edited it in another tab.
+
+Switch **Specify Variables** to **Using JSON** for the cases the fields cannot express: a whole variables object built by one expression, values for variables the template does not declare, or an intentionally empty string.
 
 ```json
 { "quote_text": "Ship it", "scenes": [{ "voiceoverText": "Hello" }] }
@@ -144,9 +160,9 @@ If a render outlives that limit, the execution is killed — the render still co
 
 If a Render and Wait times out, the node fails with the project ID in the error message: the render keeps going server-side and **Movie → Get Status** retrieves it later.
 
-### Uploading media
+### Uploading files to the Drive
 
-**Media → Upload File** takes binary data from a previous node (an HTTP Request download, a Google Drive node, a form upload) and returns a public `url` you can drop straight into an element's `src`. Files up to 500 MB are supported, and the bytes are streamed from memory — the node never writes to disk.
+**Storage → Upload File** takes binary data from a previous node (an HTTP Request download, a Google Drive node, a form upload) and returns a public `url` you can drop straight into an element's `src`. Files up to 500 MB are supported, and the bytes are streamed from memory — the node never writes to disk.
 
 ## Use with AI Agents
 
@@ -164,7 +180,7 @@ Importable workflow JSONs live in [`examples/`](./examples):
 | --- | --- |
 | [01 — Render a template and get the video URL](./examples/01-render-template-and-get-url.json) | The shortest useful workflow: variables in, video URL out |
 | [02 — Turn the newest RSS item into a social reel](./examples/02-rss-to-social-reel.json) | Scheduled rendering, JSON variables mode, client data |
-| [03 — Upload an asset, then use it in a movie](./examples/03-upload-asset-and-render.json) | Media upload feeding a Movie JSON render |
+| [03 — Upload an asset, then use it in a movie](./examples/03-upload-asset-and-render.json) | Storage upload feeding a Movie JSON render |
 | [04 — Long render with a webhook callback](./examples/04-long-render-with-webhook.json) | Create plus a Webhook trigger, for renders longer than the execution limit |
 
 See [`examples/README.md`](./examples/README.md) for import instructions.

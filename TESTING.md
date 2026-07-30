@@ -13,9 +13,9 @@ Three layers:
   All 21 operations, the credential and all 6 dynamic dropdowns that existed
   then were driven through the *compiled* handlers in `dist/` with a mock
   `IExecuteFunctions` that performs real HTTP requests. This is what closed the
-  "pending live check" sections of Phases 3–6. The seventh dropdown, added
+  "pending live check" sections of Phases 3–6. The template variables UI, changed
   afterwards, has its own section:
-  [Template Variable dropdown](#template-variable-dropdown--2026-07-30-post-live-pass-ux-change).
+  [Template variable mapper](#template-variable-mapper--2026-07-30-supersedes-the-030-dropdown).
 - **Manual checks** in n8n's own dev sandbox (`npm run dev`) for the handful of
   things only a browser and a human can confirm (the credential modal, the
   parameter panel, item linking).
@@ -491,7 +491,7 @@ The original instructions, kept for anyone re-running the pass by hand:
 
 ---
 
-## Phase 6 — Media resource
+## Phase 6 — Storage resource (internally `media`)
 
 Operations implemented: **Upload File**, **Get File**, **List Folder**,
 **Get Folder Tree**, **Move File**, **Delete File**, **Create Folder**,
@@ -697,13 +697,54 @@ The original instructions, kept for anyone re-running the pass by hand:
 - **Not verifiable with one API key**: role gating (needs a second,
   `render`-only key) and live webhook delivery (needs a publicly reachable
   endpoint).
+## Template variable mapper — 2026-07-30 (supersedes the 0.3.0 dropdown)
 
-## Template Variable dropdown — 2026-07-30 (post-live-pass UX change)
+The Variables section of Movie → Create / Render and Wait is a
+[`resourceMapper`](https://docs.n8n.io/integrations/creating-nodes/build/reference/ui-elements/)
+parameter: n8n asks the node for the variables of the selected template and
+renders **one labelled, typed input per variable**. It replaces the 0.3.0
+name/value collection whose *Name* side was a `loadOptions` dropdown, so the
+seventh dynamic dropdown of the live pass above no longer exists — the same data
+source (`GET /templates?id=…&format=make`) now feeds
+`methods.resourceMapping.getTemplateVariableFields`.
 
-Added after the live end-to-end pass: the **Name** field of each Movie → Create /
-Render and Wait variable is now a dynamic dropdown listing the selected
-template's own variables (`getTemplateVariables`), so this is the **seventh**
-dynamic dropdown — the pass above covered the six that existed then.
+### How the template dependency works
+
+`type: 'resourceMapper'` has no dependency mechanism of its own. n8n's
+`ResourceMapper` component is handed a `dependentParametersValues` prop that
+`ParameterInputList` computes from **`typeOptions.loadOptionsDependsOn`** — the
+same key a plain `options` dropdown uses — by resolving each listed path against
+the current node parameters and joining the results. The component watches that
+string and, when it changes, clears the mapped values and refetches the schema:
+
+```ts
+// editor-ui ResourceMapper.vue — "Reload fields to map when dependent parameters change"
+watch(
+  () => props.dependentParametersValues,
+  async (currentValue, oldValue) => {
+    if (oldValue !== null && currentValue !== null && oldValue !== currentValue) {
+      state.paramValue = { ...state.paramValue, value: null, schema: [] };
+      emitValueChanged();
+      await initFetching();
+      setDefaultFieldValues(true);
+    }
+  },
+);
+```
+
+So the property carries `loadOptionsDependsOn: ['templateId.value']` — the
+resource locator's **inner value**, because the resolved path is read with
+`get(resolvedNodeParameters, 'templateId.value')`; depending on `['templateId']`
+would compare two object references and never fire. Verified against the n8n
+sources for the installed line (`n8n-workflow@2.32.1`):
+`INodePropertyTypeOptions` declares `loadOptionsDependsOn` and `resourceMapper`
+side by side, `ParameterInputList.getDependentParametersValues()` reads the
+former, and `ResourceMapper.vue` holds the watcher above. The node's own
+`.agents/properties.md` documents the same pairing.
+
+Server-side, `getResourceMappingFields` builds the very same `LoadOptionsContext`
+that `loadOptions` gets, so `getCurrentNodeParameter('templateId')` returns the
+`{ mode, value }` locator and `extractTemplateId` still applies.
 
 ### Automated checks
 
@@ -712,36 +753,59 @@ dynamic dropdown — the pass above covered the six that existed then.
 | Area | Covers |
 |---|---|
 | `extractTemplateId` | Reads the ID out of a `{ mode, value }` resourceLocator (list and ID mode, trimmed), accepts the bare string an expression produces, and returns `''` for nothing-selected-yet / non-object / non-string input |
-| `buildTemplateVariableOptions` | Label is `"<label> (<name>)"` and falls back to the raw name when the label is missing or repeats it; value is always the raw name; `make_webhook_url` and `client_data` filtered **by exact name**; an `advanced` user variable is **kept**; `select` lists its allowed values; `array`/`collection` say the value must be JSON and name their `spec` sub-fields; scalars sorted before nested, stable inside each group; unknown/missing `type` still listed; help text terminated as a sentence; long defaults truncated; `"[object Object]"` and empty defaults suppressed; malformed payloads → `[]` |
+| `templateVariableFieldType` | `text`→`string`, `number`→`number`, `select`→`options`, `boolean`→`boolean`, `array`→`array`, `collection`→`object`; anything unknown (`url`, `colorpicker`, missing) → `string`, so a new API type never hides a variable |
+| `coerceVariableDefault` | `format=make` stringifies every default: `"600"`→`600`, `"false"`→`false` (a truthy string would switch the toggle on), text kept, empty dropped, `"[object Object]"` dropped, and JSON-editor types never pre-filled |
+| `buildVariableSelectOptions` | `{ label, value }` → `{ name, value }`; numeric-looking values stay strings; label falls back to the value; unusable entries skipped |
+| `buildTemplateVariableFields` | One field per variable, `id` = raw name and `displayName` = the template's label (falling back to the name); `make_webhook_url` and `client_data` filtered **by exact name**; an `advanced` user variable is **kept**; `select` becomes a dropdown carrying its choices and degrades to a text box when it has none; `array`/`collection` get a JSON editor and no junk default; the rare `required: true` is honoured; `defaultMatch`/`canBeUsedToMatch` always `false`; the template's declared order preserved; malformed payloads → `[]` |
+| `extractMappedVariables` | `defineBelow` sends the filled values with their types intact and skips the `null`s n8n uses for "left empty"; `autoMapInputData` takes the incoming item's keys that match a schema field and ignores the rest; an unloaded schema sends nothing rather than guessing; malformed input → `{}` |
 
-`test/descriptions.test.ts` additionally asserts that every
-`loadOptionsMethod` referenced by a parameter is registered on the node, and
-that the Name field is an `options` parameter depending on `templateId.value`
-while the raw-JSON variables mode stays untouched.
+`test/descriptions.test.ts` additionally asserts the whole `resourceMapper`
+configuration (method name, `mode: 'add'`, `fieldWords`, `addAllFields`,
+`multiKeyMatch`, `supportAutoMap`, `hideNoDataError`, the `loadOptionsDependsOn`
+path, the `{ mappingMode: 'defineBelow', value: null }` default), that the method
+is registered under `methods.resourceMapping`, that the raw-JSON mode is the only
+other way to provide variables, and that the 0.3.0 `variablesUi` collection and
+`getTemplateVariables` handler are gone from the Movie resource.
 
 ### Live checks — DONE 2026-07-30
 
-The **compiled** `getTemplateVariables` in `dist/` was driven with a mock
-`ILoadOptionsFunctions` making real HTTP requests, plus the mapping was run over
-`GET /templates?id=…&format=make` payloads for 20 real templates. Read-only: no
-render, no write.
+The **compiled** `getTemplateVariableFields` in `dist/` was driven with a mock
+`ILoadOptionsFunctions` making real HTTP requests, over an account with 101
+templates / 628 declared variables. Read-only: 11 `GET`s, no write, no render.
 
 | # | Item | Result |
 |---|---|---|
-| 1 | Template with one text variable | **PASS** — `Quote (quote)` → `Type: text. Default: "This is my quote today".` |
-| 2 | Template with nested variables | **PASS** — 7 options, scalars first; `Scenes (scenes)` → `Type: array — the value must be JSON. Sub-fields: voiceoverText, imagePrompt, myNewVar.` plus the author's help text |
-| 3 | `select` variable | **PASS** — `Type: select. Allowed values: slideshow, video. Default: "video".` |
-| 4 | Make.com artifacts filtered | **PASS** — `make_webhook_url` and `client_data` were present on **all** 20 templates and appeared in **none** of the option lists |
-| 5 | Expression-supplied template ID | **PASS** — a bare string (not a locator object) still resolved, 10 options |
-| 6 | Nothing selected yet | **PASS** — empty list, no request wasted |
-| 7 | Unknown template ID | **PASS** — empty list, did not throw |
-| 8 | Wrong API key | **PASS** — empty list, did not throw (same graceful degradation as the other six dropdowns) |
+| 1 | Text-only template ("Simple quote of the day") | **PASS** — `Quote` → `string`, default `"This is my quote today"`; `Author` → `string`, default `"John Doe"` |
+| 2 | `select` + `array` + `collection` ("Social Media - General Template") | **PASS** — 10 fields. `Render Mode` → `options` with `Test (image slideshow):slideshow \| Final video (avatar video):video`, default `"video"`; `Scenes` → `array`; `Avatar`, `Voice1`, `Subtitles`, `Music`, `Brand` → `object`; no `[object Object]` default anywhere |
+| 3 | `select` with numeric values + `url` + `required` ("Holger merge audio-video") | **PASS** — `Video URL` → `string`, **required**; `Start point` → `number` default `0`; `Video volume` → `options` `Muted:0 … Normal:1` default `"0"`; `Trim audio` → `options` `Yes:-2 \| No:-1` |
+| 4 | Numbers and booleans ("Color correction") | **PASS** — `Contrast`/`Brightness`/`Saturation`/`Gamma` → `number` with numeric defaults `1`, `0`, `1`, `1`; `Flip horizontally`/`Flip vertically` → `boolean` with default `false` (a real boolean, not the string `"false"` the API sends) |
+| 5 | Template with no variables ("Jason Stevens") | **PASS** — 0 fields plus the "declares no variables" notice; the two Make.com artifacts were its only variables and both were filtered |
+| 6 | Nothing selected yet | **PASS** — 0 fields, **0 requests**, "select a template above" notice |
+| 7 | Unknown template ID | **PASS** — 0 fields, did not throw, "could not be loaded" notice |
+| 8 | Expression-supplied template ID (bare string, not a locator) | **PASS** — resolved, 2 fields |
+| 9 | Wrong API key | **PASS** — 0 fields, did not throw, "could not be loaded" notice |
+| 10 | Refresh on template change | **PASS** — the same handler returned `quote, author` for one template and `my_text, photos` for another, so a changed `templateId.value` yields a different field list |
+| 11 | Runtime extraction against a live schema | **PASS** — `defineBelow` `{ video_URL, video_volume: "0.5", audio_URL: null }` → `{ video_URL, video_volume }`; `autoMapInputData` with an item carrying `video_URL`, `trim_audio` and `not_a_variable` → `{ video_URL, trim_audio }` |
 
-Type distribution observed across the 20 templates: `text` 72, `collection` 36,
-`array` 35, `select` 8, `number` 3 — plus `boolean` inside `spec`. The type set
-is treated as open; an unknown type renders as `Type: <type>.` rather than being
-hidden.
+Type distribution across the whole account (628 variables, Make.com artifacts
+excluded): `text` 454, `number` 71, `array` 36, `collection` 36, `select` 23,
+`url` 4, `boolean` 4. `url` is **not** in the mapping table and is what proves
+the unknown-type fallback matters — it renders as a text box. `required: true`
+appears on 2 of the 628, which is why it is honoured rather than hard-coded to
+`false`.
 
-Still only checkable in a browser (`npm run dev`): that the list **reloads** when
-the template is changed (the `loadOptionsDependsOn: ['templateId.value']` path)
-and that the per-option `description` renders as the dropdown's secondary line.
+### Not verifiable outside a browser
+
+- That the parameter panel visually renders the fields as `Label: [input]` rows,
+  and that the **Map Automatically** / refresh controls appear. The field
+  contract they render from is what the checks above cover.
+- That the watcher above actually fires on a template change in a live editor.
+  What was verified is both halves either side of it: the n8n source path that
+  wires `loadOptionsDependsOn` → `dependentParametersValues` → refetch, and that
+  the handler returns a different field list per template (case 10).
+- `help` text is **not shown anywhere**. `ResourceMapperField` has no
+  description, hint or tooltip member, and `MappingFields.vue` hard-codes the
+  per-field description to either the "using to match" or the "mandatory field"
+  string — a value supplied by the node would be discarded. The 0.3.0 dropdown
+  could show it because a dropdown option has a `description`; the mapper has no
+  equivalent surface. 56 of the 628 variables carry `help`.
