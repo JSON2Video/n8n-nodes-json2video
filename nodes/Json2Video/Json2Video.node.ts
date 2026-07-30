@@ -24,6 +24,7 @@ import {
 	getMediaFiles,
 	getMediaFolders,
 	getTemplateTags,
+	getTemplateVariables,
 } from './methods/loadOptions';
 import { searchLibraryTemplates, searchTemplates } from './methods/listSearch';
 
@@ -68,11 +69,11 @@ export class Json2Video implements INodeType {
 				name: 'resource',
 				type: 'options',
 				noDataExpression: true,
+				// Deliberately not alphabetical: the resource order decides the order of
+				// the actions list in the nodes panel, and Movie is the reason people
+				// install this node — rendering a video. Template and Media support it.
+				// n8n's own first-party nodes order resources by importance the same way.
 				options: [
-					{
-						name: 'Media',
-						value: 'media',
-					},
 					{
 						name: 'Movie',
 						value: 'movie',
@@ -80,6 +81,10 @@ export class Json2Video implements INodeType {
 					{
 						name: 'Template',
 						value: 'template',
+					},
+					{
+						name: 'Media',
+						value: 'media',
 					},
 				],
 				default: 'movie',
@@ -103,6 +108,7 @@ export class Json2Video implements INodeType {
 			getMediaFiles,
 			getMediaFolders,
 			getTemplateTags,
+			getTemplateVariables,
 		},
 	};
 

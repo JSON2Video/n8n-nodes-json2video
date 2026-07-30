@@ -10,10 +10,12 @@ Three layers:
   polling backoff and API error extraction. Run them with `npm test`.
 - **A live end-to-end pass** against the production JSON2Video API, run
   2026-07-30 — see [Live end-to-end pass](#live-end-to-end-pass--2026-07-30).
-  All 21 operations, the credential and all 6 dynamic dropdowns were driven
-  through the *compiled* handlers in `dist/` with a mock `IExecuteFunctions`
-  that performs real HTTP requests. This is what closed the "pending live
-  check" sections of Phases 3–6.
+  All 21 operations, the credential and all 6 dynamic dropdowns that existed
+  then were driven through the *compiled* handlers in `dist/` with a mock
+  `IExecuteFunctions` that performs real HTTP requests. This is what closed the
+  "pending live check" sections of Phases 3–6. The seventh dropdown, added
+  afterwards, has its own section:
+  [Template Variable dropdown](#template-variable-dropdown--2026-07-30-post-live-pass-ux-change).
 - **Manual checks** in n8n's own dev sandbox (`npm run dev`) for the handful of
   things only a browser and a human can confirm (the credential modal, the
   parameter panel, item linking).
@@ -695,3 +697,51 @@ The original instructions, kept for anyone re-running the pass by hand:
 - **Not verifiable with one API key**: role gating (needs a second,
   `render`-only key) and live webhook delivery (needs a publicly reachable
   endpoint).
+
+## Template Variable dropdown — 2026-07-30 (post-live-pass UX change)
+
+Added after the live end-to-end pass: the **Name** field of each Movie → Create /
+Render and Wait variable is now a dynamic dropdown listing the selected
+template's own variables (`getTemplateVariables`), so this is the **seventh**
+dynamic dropdown — the pass above covered the six that existed then.
+
+### Automated checks
+
+`test/template.test.ts` locks the pure mapping down:
+
+| Area | Covers |
+|---|---|
+| `extractTemplateId` | Reads the ID out of a `{ mode, value }` resourceLocator (list and ID mode, trimmed), accepts the bare string an expression produces, and returns `''` for nothing-selected-yet / non-object / non-string input |
+| `buildTemplateVariableOptions` | Label is `"<label> (<name>)"` and falls back to the raw name when the label is missing or repeats it; value is always the raw name; `make_webhook_url` and `client_data` filtered **by exact name**; an `advanced` user variable is **kept**; `select` lists its allowed values; `array`/`collection` say the value must be JSON and name their `spec` sub-fields; scalars sorted before nested, stable inside each group; unknown/missing `type` still listed; help text terminated as a sentence; long defaults truncated; `"[object Object]"` and empty defaults suppressed; malformed payloads → `[]` |
+
+`test/descriptions.test.ts` additionally asserts that every
+`loadOptionsMethod` referenced by a parameter is registered on the node, and
+that the Name field is an `options` parameter depending on `templateId.value`
+while the raw-JSON variables mode stays untouched.
+
+### Live checks — DONE 2026-07-30
+
+The **compiled** `getTemplateVariables` in `dist/` was driven with a mock
+`ILoadOptionsFunctions` making real HTTP requests, plus the mapping was run over
+`GET /templates?id=…&format=make` payloads for 20 real templates. Read-only: no
+render, no write.
+
+| # | Item | Result |
+|---|---|---|
+| 1 | Template with one text variable | **PASS** — `Quote (quote)` → `Type: text. Default: "This is my quote today".` |
+| 2 | Template with nested variables | **PASS** — 7 options, scalars first; `Scenes (scenes)` → `Type: array — the value must be JSON. Sub-fields: voiceoverText, imagePrompt, myNewVar.` plus the author's help text |
+| 3 | `select` variable | **PASS** — `Type: select. Allowed values: slideshow, video. Default: "video".` |
+| 4 | Make.com artifacts filtered | **PASS** — `make_webhook_url` and `client_data` were present on **all** 20 templates and appeared in **none** of the option lists |
+| 5 | Expression-supplied template ID | **PASS** — a bare string (not a locator object) still resolved, 10 options |
+| 6 | Nothing selected yet | **PASS** — empty list, no request wasted |
+| 7 | Unknown template ID | **PASS** — empty list, did not throw |
+| 8 | Wrong API key | **PASS** — empty list, did not throw (same graceful degradation as the other six dropdowns) |
+
+Type distribution observed across the 20 templates: `text` 72, `collection` 36,
+`array` 35, `select` 8, `number` 3 — plus `boolean` inside `spec`. The type set
+is treated as open; an unknown type renders as `Type: <type>.` rather than being
+hidden.
+
+Still only checkable in a browser (`npm run dev`): that the list **reloads** when
+the template is changed (the `loadOptionsDependsOn: ['templateId.value']` path)
+and that the per-option `description` renders as the dropdown's secondary line.

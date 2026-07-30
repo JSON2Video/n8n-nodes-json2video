@@ -182,12 +182,19 @@ const inputModeFields: INodeProperties[] = [
 				displayName: 'Variable',
 				values: [
 					{
-						displayName: 'Name',
+						displayName: 'Variable Name or ID',
 						name: 'name',
-						type: 'string',
+						type: 'options',
+						typeOptions: {
+							loadOptionsMethod: 'getTemplateVariables',
+							// The dependency is the resource locator's inner value, not the
+							// locator object, so switching template reloads the list.
+							loadOptionsDependsOn: ['templateId.value'],
+						},
 						default: '',
+						hint: 'The list holds the variables the selected template declares, with their type and default. A name typed in or coming from an expression is sent as-is; letters, numbers and underscores only, any other character is silently replaced with an underscore. Variables that need a JSON value are listed last — switch Specify Variables to Using JSON for those.',
 						description:
-							'Name of the {{placeholder}} inside the template, without the braces. Letters, numbers and underscores only — any other character is silently replaced with an underscore.',
+							'Variable of the template to fill, sent without the {{braces}}. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 					},
 					{
 						displayName: 'Value',

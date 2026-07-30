@@ -1,4 +1,4 @@
-import type { IDataObject } from 'n8n-workflow';
+import type { IDataObject, INodePropertyOptions } from 'n8n-workflow';
 
 // Pure helpers that turn n8n parameter values into JSON2Video Template
 // request bodies, and shape Template responses. No n8n runtime is touched
@@ -108,4 +108,152 @@ export function buildTemplateBody(input: TemplateBodyInput): IDataObject {
  */
 export function buildDeleteTemplateResponse(templateId: string): IDataObject {
 	return { success: true, templateId, deleted: true };
+}
+
+/**
+ * Reads the plain template ID out of a `templateId` resourceLocator parameter
+ * value. `loadOptions` handlers get the raw parameter — `{ mode, value }` in
+ * list/ID mode, or already a string when an expression produced it — so both
+ * shapes are accepted. An empty string means "nothing selected yet".
+ */
+export function extractTemplateId(value: unknown): string {
+	if (typeof value === 'string') return value.trim();
+
+	if (typeof value === 'object' && value !== null) {
+		const inner = (value as IDataObject).value;
+		if (typeof inner === 'string') return inner.trim();
+	}
+
+	return '';
+}
+
+/**
+ * Variables that `GET /templates?format=make` injects on **every** template
+ * because the Make.com app needs them as module fields. They are not part of
+ * the user's template, and the n8n node already covers both with first-class
+ * parameters (Additional Options → Webhook URL and → Client Data), so they are
+ * filtered out of the Variables dropdown.
+ *
+ * Filtered by exact name on purpose, never by the `advanced` flag they happen
+ * to carry: a real template variable may legitimately be advanced, and hiding
+ * a user's own variable would be worse than showing one extra.
+ */
+export const PLATFORM_INJECTED_VARIABLES = ['make_webhook_url', 'client_data'];
+
+/** Variable types whose value has to be written as JSON, listed last. */
+const NESTED_VARIABLE_TYPES = ['array', 'collection'];
+
+/** Longest default value echoed into a dropdown description. */
+const MAX_DEFAULT_PREVIEW = 60;
+
+function readString(value: unknown): string {
+	return typeof value === 'string' ? value.trim() : '';
+}
+
+function readObjects(value: unknown): IDataObject[] {
+	return Array.isArray(value)
+		? value.filter((entry): entry is IDataObject => typeof entry === 'object' && entry !== null)
+		: [];
+}
+
+/** Ends a sentence fragment coming from the API with a full stop. */
+function asSentence(text: string): string {
+	return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+/**
+ * The Make-shaped payload stringifies every default, so a nested variable's
+ * default arrives as `"[object Object]"` or a comma-separated list of them.
+ * Those carry no information and must not reach the UI.
+ */
+function formatDefault(value: unknown): string | undefined {
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+	if (typeof value !== 'string') return undefined;
+
+	const trimmed = value.trim();
+	if (trimmed === '' || trimmed.includes('[object Object]')) return undefined;
+
+	const preview =
+		trimmed.length > MAX_DEFAULT_PREVIEW
+			? `${trimmed.slice(0, MAX_DEFAULT_PREVIEW).trimEnd()}…`
+			: trimmed;
+
+	return `"${preview}"`;
+}
+
+/**
+ * The `description` line under one entry of the Variables dropdown: what type
+ * the template expects, what the template's own default is, and the template
+ * author's help text. `select` lists its allowed values; `array` and
+ * `collection` say the value must be JSON and name their sub-fields, because
+ * the key/value UI can only send text and those need the JSON mode.
+ */
+function describeTemplateVariable(variable: IDataObject): string {
+	const type = readString(variable.type);
+	const sentences: string[] = [];
+
+	if (type === 'select') {
+		const values = readObjects(variable.options)
+			.map((option) => readString(option.value))
+			.filter((value) => value !== '');
+
+		sentences.push(
+			values.length > 0 ? `Type: select. Allowed values: ${values.join(', ')}.` : 'Type: select.',
+		);
+	} else if (NESTED_VARIABLE_TYPES.includes(type)) {
+		const fields = readObjects(variable.spec)
+			.map((field) => readString(field.name))
+			.filter((name) => name !== '');
+
+		sentences.push(`Type: ${type} — the value must be JSON.`);
+		if (fields.length > 0) sentences.push(`Sub-fields: ${fields.join(', ')}.`);
+	} else {
+		sentences.push(`Type: ${type === '' ? 'unknown' : type}.`);
+	}
+
+	const defaultValue = formatDefault(variable.default);
+	if (defaultValue !== undefined) sentences.push(`Default: ${defaultValue}.`);
+
+	const help = readString(variable.help);
+	if (help !== '') sentences.push(asSentence(help));
+
+	return sentences.join(' ');
+}
+
+/**
+ * "Template Variable" dropdown (Appendix C), built from the `variables` array of
+ * `GET /templates?id=<id>&format=make`.
+ *
+ * The label carries both the human label and the raw name, so either one finds
+ * the entry when typing; the value is always the raw name, which is what
+ * `variables` keys must be called on `POST /movies`.
+ *
+ * Scalar variables come first and JSON-only ones (`array`, `collection`) last:
+ * the fields below can only send text, so a nested variable is a signal to
+ * switch *Specify Variables* to `Using JSON`.
+ */
+export function buildTemplateVariableOptions(variables: unknown): INodePropertyOptions[] {
+	const entries: Array<{ option: INodePropertyOptions; nested: boolean }> = [];
+
+	for (const variable of readObjects(variables)) {
+		const name = readString(variable.name);
+		if (name === '' || PLATFORM_INJECTED_VARIABLES.includes(name)) continue;
+
+		const label = readString(variable.label);
+
+		entries.push({
+			option: {
+				name: label === '' || label === name ? name : `${label} (${name})`,
+				value: name,
+				description: describeTemplateVariable(variable),
+			},
+			nested: NESTED_VARIABLE_TYPES.includes(readString(variable.type)),
+		});
+	}
+
+	// Stable: scalars keep the template's own order, and so do nested ones.
+	return [
+		...entries.filter((entry) => !entry.nested),
+		...entries.filter((entry) => entry.nested),
+	].map((entry) => entry.option);
 }

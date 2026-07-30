@@ -114,12 +114,22 @@ describe('resource and operation parameters', () => {
 		expect(properties[0].noDataExpression).toBe(true);
 	});
 
-	it('lists resources alphabetically and defaults to Movie', () => {
+	it('lists resources primary-first, not alphabetically, and defaults to Movie', () => {
+		// Deliberately not alphabetical: this order drives the order of the actions
+		// list in the nodes panel, and Movie is what the node exists for. Movie
+		// first, then Template, then Media — do not "fix" this to alphabetical.
 		const names = ((resourceProperty?.options ?? []) as INodePropertyOptions[]).map(
 			(option) => option.name,
 		);
-		expect(names).toEqual([...names].sort());
+		expect(names).toEqual(['Movie', 'Template', 'Media']);
 		expect(resourceProperty?.default).toBe('movie');
+
+		// The per-resource parameter blocks follow the same order, so the panel
+		// renders operations in the order the resources are listed.
+		const operationResources = operationProperties.map(
+			(prop) => (prop.displayOptions?.show?.resource as string[])[0],
+		);
+		expect(operationResources).toEqual(['movie', 'template', 'media']);
 	});
 
 	it('has exactly one Operation parameter per resource', () => {
@@ -225,6 +235,42 @@ describe('parameter conventions', () => {
 				'https://docs.n8n.io/code/expressions/',
 			);
 		}
+	});
+
+	it('registers every dynamic dropdown method on the node', () => {
+		const registered = Object.keys(node.methods?.loadOptions ?? {});
+
+		for (const prop of allProperties) {
+			const method = prop.typeOptions?.loadOptionsMethod;
+			if (method === undefined) continue;
+			expect(registered, `"${prop.displayName}" references an unregistered method`).toContain(
+				method,
+			);
+		}
+	});
+
+	it('fills the template variable name from the selected template', () => {
+		const nameField = allProperties.find(
+			(prop) => prop.typeOptions?.loadOptionsMethod === 'getTemplateVariables',
+		);
+
+		expect(nameField?.name).toBe('name');
+		expect(nameField?.type).toBe('options');
+		// A resourceLocator's dependency is its inner `.value`, not the locator.
+		expect(nameField?.typeOptions?.loadOptionsDependsOn).toEqual(['templateId.value']);
+		// The list is a convenience: a typed or expression-driven name still works.
+		expect(nameField?.default).toBe('');
+		expect(nameField?.hint).toBeTruthy();
+
+		// Create and Render and Wait share the same form, so both get the dropdown.
+		const variables = properties.find((prop) => prop.name === 'variablesUi');
+		expect(variables?.displayOptions?.show?.operation).toEqual(['create', 'renderAndWait']);
+		expect(variables?.displayOptions?.show?.specifyVariables).toEqual(['keypair']);
+
+		// The raw-JSON escape hatch is untouched.
+		const variablesJson = properties.find((prop) => prop.name === 'variablesJson');
+		expect(variablesJson?.type).toBe('json');
+		expect(variablesJson?.typeOptions?.loadOptionsMethod).toBeUndefined();
 	});
 
 	it('pairs every Return All toggle with a Limit', () => {

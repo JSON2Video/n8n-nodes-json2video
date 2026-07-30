@@ -104,6 +104,14 @@ Then configure the node:
 - **Input Mode**: Template · **Template**: pick it from the list
 - **Variables**: `quote_text` → `{{ $json.quote }}`, `background_image` → `{{ $json.image_url }}`
 
+The **Name** field of each variable is a dropdown listing the variables the selected template actually declares, with each one's type, default value and the help text saved with the template. Names not in the list still work: type one in, or drive it from an expression.
+
+Variables whose type is `array` or `collection` need a JSON value, which the fields cannot send — those are listed last, and for them switch **Specify Variables** to **Using JSON** and pass the whole object at once:
+
+```json
+{ "quote_text": "Ship it", "scenes": [{ "voiceoverText": "Hello" }] }
+```
+
 The node submits the render, polls until it finishes, and emits the movie object:
 
 ```json

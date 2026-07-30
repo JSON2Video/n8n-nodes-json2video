@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Template variables are now a dropdown.** On Movie → Create and Movie →
+  Render and Wait in Template mode, the **Name** of each variable lists the
+  variables the selected template actually declares, with each one's type,
+  default value and the help text saved with the template. Variables that need a
+  JSON value (`array`, `collection`) are listed last, with their sub-fields
+  named. The field stays expression-friendly, and the raw-JSON variables mode is
+  unchanged.
+
+### Changed
+
+- **Movie actions come first in the nodes panel.** The resource list is now
+  Movie, Template, Media instead of alphabetical, so the primary resource leads.
+
 ### Fixed
 
 - **Error hints now actually appear.** n8n's `NodeApiError` keeps the API payload

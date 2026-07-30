@@ -1,7 +1,11 @@
 import type { IDataObject, ILoadOptionsFunctions, INodePropertyOptions } from 'n8n-workflow';
 
 import { buildFileOptions, buildFolderOptions, toListFolderPath } from '../helpers/media';
-import { collectSortedTags } from '../helpers/template';
+import {
+	buildTemplateVariableOptions,
+	collectSortedTags,
+	extractTemplateId,
+} from '../helpers/template';
 import { json2VideoApiRequest } from '../transport';
 
 /** Cap what a dropdown renders so a big Drive cannot freeze the parameter panel. */
@@ -22,6 +26,44 @@ export async function getTemplateTags(this: ILoadOptionsFunctions): Promise<INod
 		const templates = Array.isArray(response.templates) ? (response.templates as IDataObject[]) : [];
 
 		return collectSortedTags(templates).map((tag) => ({ name: tag, value: tag }));
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * "Template Variable" dropdown (Appendix C): the variables of the template
+ * currently selected in the `templateId` resource locator
+ * (`loadOptionsDependsOn: ['templateId.value']`), from
+ * `GET /templates?id=<id>&format=make`.
+ *
+ * `format=make` is the only shape that returns typed variable descriptors
+ * (name, label, type, default, help, select options, nested `spec`); the
+ * default and `format=jsonschema` shapes do not. It is an internal format —
+ * see `operations.md` → "Template — Get" and Appendix A.4.
+ *
+ * Degrades gracefully: no template selected yet, an expired key, a key whose
+ * role is too low or a transient failure all return an empty list instead of
+ * breaking the parameter panel. The field still accepts a name typed in
+ * directly or supplied by an expression.
+ */
+export async function getTemplateVariables(
+	this: ILoadOptionsFunctions,
+): Promise<INodePropertyOptions[]> {
+	try {
+		const templateId = extractTemplateId(this.getCurrentNodeParameter('templateId'));
+		if (templateId === '') return [];
+
+		const response = await json2VideoApiRequest.call(this, 'GET', '/templates', {
+			qs: { id: templateId, format: 'make' },
+		});
+
+		const template =
+			typeof response.template === 'object' && response.template !== null
+				? (response.template as IDataObject)
+				: {};
+
+		return buildTemplateVariableOptions(template.variables);
 	} catch {
 		return [];
 	}
